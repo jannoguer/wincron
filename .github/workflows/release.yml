@@ -1,0 +1,41 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify tag points to a commit on main
+        run: git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build and package
+        env:
+          GOOS: windows
+          CGO_ENABLED: "0"
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          for arch in amd64 arm64 386; do
+            GOARCH="$arch" go build -ldflags "-s -w" -trimpath -o wincron.exe .
+            zip "wincron-${version}-windows-${arch}.zip" wincron.exe install.bat README.md LICENSE.md
+            rm wincron.exe
+          done
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: wincron-*-windows-*.zip
