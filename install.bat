@@ -1,5 +1,5 @@
 @echo off
-:: auto-escalate to admin
+:: asks for admin escalation
 net session >nul 2>&1 || (
   powershell -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
   exit /b
@@ -20,7 +20,7 @@ echo wincron.exe found, proceeding with installation...
 
 :: install the binary
 mkdir "%ProgramFiles%\wincron" 2>nul
-move /y wincron.exe "%ProgramFiles%\wincron" >nul || goto :fail
+copy /y wincron.exe "%ProgramFiles%\wincron" >nul || goto :fail
 cd /d "%ProgramFiles%\wincron"
 
 wincron.exe install || goto :fail
