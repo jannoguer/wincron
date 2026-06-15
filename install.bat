@@ -18,10 +18,27 @@ if not exist wincron.exe (
 
 echo wincron.exe found, proceeding with installation...
 
+set "TARGET=%ProgramFiles%\wincron"
+
+:: an existing install must be stopped and uninstalled before we overwrite it.
+:: ask for consent first; crontab.txt is preserved, unrelated files are left alone.
+if not exist "%TARGET%\wincron.exe" goto :install
+echo.
+echo An existing wincron installation was found at "%TARGET%".
+set "REPLY="
+set /p REPLY="Stop and uninstall it before updating? Your crontab.txt will be kept. [y/N] "
+if /i not "%REPLY%"=="y" (
+  echo aborted, nothing was changed.
+  goto :fail
+)
+"%TARGET%\wincron.exe" stop >nul 2>&1
+"%TARGET%\wincron.exe" uninstall >nul 2>&1
+
+:install
 :: install the binary
-mkdir "%ProgramFiles%\wincron" 2>nul
-copy /y wincron.exe "%ProgramFiles%\wincron" >nul || goto :fail
-cd /d "%ProgramFiles%\wincron"
+mkdir "%TARGET%" 2>nul
+copy /y wincron.exe "%TARGET%" >nul || goto :fail
+cd /d "%TARGET%"
 
 wincron.exe install || goto :fail
 if not exist crontab.txt (
@@ -31,17 +48,18 @@ if not exist crontab.txt (
 )
 wincron.exe start
 
-:: generate self-deleting, self-elevating uninstaller
+:: generate self-deleting, self-elevating uninstaller. it removes only wincron's
+:: own files, then removes the folder if it ends up empty (left alone otherwise).
 (
   echo @echo off
   echo net session ^>nul 2^>^&1 ^|^| ^(
   echo   powershell -Command "Start-Process -FilePath '%%~f0' -Verb RunAs"
   echo   exit /b
   echo ^)
-  echo "%ProgramFiles%\wincron\wincron.exe" stop ^>nul
-  echo "%ProgramFiles%\wincron\wincron.exe" uninstall ^>nul
+  echo "%TARGET%\wincron.exe" stop ^>nul
+  echo "%TARGET%\wincron.exe" uninstall ^>nul
   echo cd /d "%SystemRoot%" ^>nul
-  echo ^(goto^) 2^>nul ^& rd /s /q "%ProgramFiles%\wincron" ^>nul
+  echo ^(goto^) 2^>nul ^& del /q "%TARGET%\wincron.exe" "%TARGET%\crontab.txt" "%TARGET%\wincron.log" "%TARGET%\wincron.log.1" "%%~f0" 2^>nul ^& rd "%TARGET%" ^>nul 2^>^&1
 ) > uninstall.bat
 
 echo done.
