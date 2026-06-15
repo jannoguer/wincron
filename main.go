@@ -77,14 +77,12 @@ func main() {
 }
 
 func list(crontabPath string) error {
-	jobs, err := cron.LoadFile(crontabPath)
+	data, err := os.ReadFile(crontabPath)
 	if err != nil {
 		return err
 	}
-	for _, job := range jobs {
-		fmt.Printf("L%d: %s\n", job.Line, job.Command)
-	}
-	return nil
+	_, err = os.Stdout.Write(data)
+	return err
 }
 
 func validate(crontabPath string) error {
