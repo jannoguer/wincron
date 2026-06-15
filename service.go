@@ -66,7 +66,7 @@ func installService(exePath string) error {
 	if err != nil {
 		return err
 	}
-	defer m.Disconnect()
+	defer func() { _ = m.Disconnect() }()
 	service, err := m.CreateService(serviceName, exePath, mgr.Config{
 		DisplayName: "wincron scheduler",
 		StartType:   mgr.StartAutomatic,
@@ -82,7 +82,7 @@ func uninstallService() error {
 	if err != nil {
 		return err
 	}
-	defer m.Disconnect()
+	defer func() { _ = m.Disconnect() }()
 	service, err := m.OpenService(serviceName)
 	if err != nil {
 		return err
@@ -96,7 +96,7 @@ func startService() error {
 	if err != nil {
 		return err
 	}
-	defer m.Disconnect()
+	defer func() { _ = m.Disconnect() }()
 	service, err := m.OpenService(serviceName)
 	if err != nil {
 		return err
@@ -110,7 +110,7 @@ func stopService() error {
 	if err != nil {
 		return err
 	}
-	defer m.Disconnect()
+	defer func() { _ = m.Disconnect() }()
 	service, err := m.OpenService(serviceName)
 	if err != nil {
 		return err
