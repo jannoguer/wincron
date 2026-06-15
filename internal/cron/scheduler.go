@@ -31,6 +31,7 @@ func (s *Scheduler) Run(ctx context.Context) {
 	defer cancelJobs()
 
 	s.logger.Printf("scheduler started, %d jobs from %s", len(s.jobs), s.crontabPath)
+	s.runRebootJobs(jobCtx)
 	lastMinute := time.Now().Truncate(time.Minute)
 	for {
 		wake := time.Now().Truncate(time.Minute).Add(time.Minute)
@@ -57,6 +58,9 @@ func (s *Scheduler) runDueJobs(jobCtx context.Context, lastMinute, now time.Time
 	}
 	for ; !minute.After(now); minute = minute.Add(time.Minute) {
 		for _, job := range s.jobs {
+			if job.Reboot {
+				continue
+			}
 			if job.Schedule.Matches(minute) {
 				s.wg.Add(1)
 				go func() {
@@ -67,6 +71,19 @@ func (s *Scheduler) runDueJobs(jobCtx context.Context, lastMinute, now time.Time
 		}
 	}
 	return now
+}
+
+func (s *Scheduler) runRebootJobs(jobCtx context.Context) {
+	for _, job := range s.jobs {
+		if !job.Reboot {
+			continue
+		}
+		s.wg.Add(1)
+		go func() {
+			defer s.wg.Done()
+			runJob(jobCtx, job, s.logger)
+		}()
+	}
 }
 
 func (s *Scheduler) shutdown(cancelJobs context.CancelFunc) {
