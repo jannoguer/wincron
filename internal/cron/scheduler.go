@@ -50,6 +50,9 @@ func (s *Scheduler) Run(ctx context.Context) {
 }
 
 func (s *Scheduler) runDueJobs(jobCtx context.Context, lastMinute, now time.Time) time.Time {
+	if !now.After(lastMinute) {
+		return lastMinute
+	}
 	minute := lastMinute.Add(time.Minute)
 	if now.Sub(minute) > maxCatchupMinutes*time.Minute {
 		skipTo := now.Add(-maxCatchupMinutes * time.Minute)
