@@ -5,16 +5,20 @@ import (
 	"log"
 	"os"
 	"sync"
+	"time"
 )
 
 const maxLogBytes = 10 << 20
 
+const rotateRetryCooldown = 5 * time.Second
+
 type rotatingWriter struct {
-	mu      sync.Mutex
-	path    string
-	f       *os.File
-	size    int64
-	maxSize int64
+	mu       sync.Mutex
+	path     string
+	f        *os.File
+	size     int64
+	maxSize  int64
+	lastFail time.Time
 }
 
 func newRotatingWriter(path string, maxSize int64) (*rotatingWriter, error) {
@@ -42,20 +46,40 @@ func (w *rotatingWriter) Write(p []byte) (int, error) {
 }
 
 func (w *rotatingWriter) rotate() {
+	if !w.lastFail.IsZero() && time.Since(w.lastFail) < rotateRetryCooldown {
+		return
+	}
 	w.f.Close()
 	os.Remove(w.path + ".1")
 	if err := os.Rename(w.path, w.path+".1"); err != nil {
-		if f, oerr := os.OpenFile(w.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); oerr == nil {
-			w.f = f
-		}
+		w.reopen(w.path, w.size)
+		w.lastFail = time.Now()
 		return
 	}
-	f, err := os.OpenFile(w.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	nf, err := os.OpenFile(w.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		w.reopen(w.path+".1", -1)
+		w.lastFail = time.Now()
+		return
+	}
+	w.f = nf
+	w.size = 0
+	w.lastFail = time.Time{}
+}
+
+func (w *rotatingWriter) reopen(path string, sizeHint int64) {
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return
 	}
 	w.f = f
-	w.size = 0
+	if sizeHint >= 0 {
+		w.size = sizeHint
+		return
+	}
+	if info, serr := f.Stat(); serr == nil {
+		w.size = info.Size()
+	}
 }
 
 func (w *rotatingWriter) Close() error {
