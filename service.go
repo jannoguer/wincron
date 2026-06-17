@@ -120,16 +120,26 @@ func stopService() error {
 	if err != nil {
 		return err
 	}
-	deadline := time.Now().Add(30 * time.Second)
-	for state.State != svc.Stopped {
-		if time.Now().After(deadline) {
+	if state.State == svc.Stopped {
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	ticker := time.NewTicker(300 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
 			return fmt.Errorf("timed out waiting for service to stop")
-		}
-		time.Sleep(300 * time.Millisecond)
-		state, err = service.Query()
-		if err != nil {
-			return err
+		case <-ticker.C:
+			state, err = service.Query()
+			if err != nil {
+				return err
+			}
+			if state.State == svc.Stopped {
+				return nil
+			}
 		}
 	}
-	return nil
 }
