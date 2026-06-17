@@ -36,6 +36,9 @@ func runJob(ctx context.Context, job Job, logger *log.Logger) {
 	}
 	cmd := exec.CommandContext(ctx, shell)
 	cmd.SysProcAttr = &syscall.SysProcAttr{CmdLine: "/C " + job.Command}
+	if len(job.Envs) > 0 {
+		cmd.Env = append(os.Environ(), job.Envs...)
+	}
 
 	out := cappedBuffer{max: maxJobOutputBytes}
 	cmd.Stdout = &out
