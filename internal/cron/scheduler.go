@@ -50,43 +50,55 @@ func (s *Scheduler) Run(ctx context.Context) {
 }
 
 func (s *Scheduler) runDueJobs(jobCtx context.Context, lastMinute, now time.Time) time.Time {
+	due, last := s.collectDue(lastMinute, now)
+	for _, job := range due {
+		s.launch(jobCtx, job)
+	}
+	return last
+}
+
+// collectDue returns the jobs that match at least one minute in
+// (lastMinute, now]. Each job is returned at most once, so waking up late
+// (system resume, clock jump) cannot launch a burst of concurrent copies.
+func (s *Scheduler) collectDue(lastMinute, now time.Time) ([]Job, time.Time) {
 	if !now.After(lastMinute) {
-		return lastMinute
+		return nil, lastMinute
 	}
-	minute := lastMinute.Add(time.Minute)
-	if now.Sub(minute) > maxCatchupMinutes*time.Minute {
+	first := lastMinute.Add(time.Minute)
+	if now.Sub(first) > maxCatchupMinutes*time.Minute {
 		skipTo := now.Add(-maxCatchupMinutes * time.Minute)
-		s.logger.Printf("woke %s late, skipping catch-up to %s", now.Sub(minute).Round(time.Minute), skipTo.Format(time.RFC3339))
-		minute = skipTo
+		s.logger.Printf("woke %s late, skipping catch-up to %s", now.Sub(first).Round(time.Minute), skipTo.Format(time.RFC3339))
+		first = skipTo
 	}
-	for ; !minute.After(now); minute = minute.Add(time.Minute) {
-		for _, job := range s.jobs {
-			if job.Reboot {
-				continue
-			}
+	var due []Job
+	for _, job := range s.jobs {
+		if job.Reboot {
+			continue
+		}
+		for minute := first; !minute.After(now); minute = minute.Add(time.Minute) {
 			if job.Schedule.Matches(minute) {
-				s.wg.Add(1)
-				go func() {
-					defer s.wg.Done()
-					runJob(jobCtx, job, s.logger)
-				}()
+				due = append(due, job)
+				break
 			}
 		}
 	}
-	return now
+	return due, now
 }
 
 func (s *Scheduler) runRebootJobs(jobCtx context.Context) {
 	for _, job := range s.jobs {
-		if !job.Reboot {
-			continue
+		if job.Reboot {
+			s.launch(jobCtx, job)
 		}
-		s.wg.Add(1)
-		go func() {
-			defer s.wg.Done()
-			runJob(jobCtx, job, s.logger)
-		}()
 	}
+}
+
+func (s *Scheduler) launch(jobCtx context.Context, job Job) {
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		runJob(jobCtx, job, s.logger)
+	}()
 }
 
 func (s *Scheduler) shutdown(cancelJobs context.CancelFunc) {

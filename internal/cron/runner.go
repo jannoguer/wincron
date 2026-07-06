@@ -7,9 +7,16 @@ import (
 	"os/exec"
 	"syscall"
 	"time"
+
+	"golang.org/x/sys/windows"
 )
 
 const maxJobOutputBytes = 64 << 10
+
+// Bounds the wait for output pipes held open by descendants that outlive
+// cmd.exe, and the wait for an unresponsive process after cancellation.
+// Without it, Wait blocks until every inherited pipe handle is closed.
+const pipeWaitDelay = 5 * time.Second
 
 type cappedBuffer struct {
 	buf   []byte
@@ -36,6 +43,7 @@ func runJob(ctx context.Context, job Job, logger *log.Logger) {
 	}
 	cmd := exec.CommandContext(ctx, shell)
 	cmd.SysProcAttr = &syscall.SysProcAttr{CmdLine: "/C " + job.Command}
+	cmd.WaitDelay = pipeWaitDelay
 	if len(job.Envs) > 0 {
 		cmd.Env = append(os.Environ(), job.Envs...)
 	}
@@ -44,9 +52,29 @@ func runJob(ctx context.Context, job Job, logger *log.Logger) {
 	cmd.Stdout = &out
 	cmd.Stderr = &out
 
+	// Killing cmd.exe alone leaves its children running, so on cancellation
+	// terminate the whole tree through a job object. Kill remains the
+	// fallback in case termination fails or assignment never happened.
+	killJob, killJobErr := windows.CreateJobObject(nil, nil)
+	if killJobErr == nil {
+		defer windows.CloseHandle(killJob)
+		cmd.Cancel = func() error {
+			_ = windows.TerminateJobObject(killJob, 1)
+			return cmd.Process.Kill()
+		}
+	}
+
 	logger.Printf("start job L%d: %s", job.Line, job.Command)
 	started := time.Now()
-	err := cmd.Run()
+	err := cmd.Start()
+	if err == nil {
+		if killJobErr == nil {
+			if aerr := assignToJobObject(killJob, cmd.Process.Pid); aerr != nil {
+				logger.Printf("job L%d: cannot track process tree: %v", job.Line, aerr)
+			}
+		}
+		err = cmd.Wait()
+	}
 	duration := time.Since(started).Round(time.Millisecond)
 
 	if len(out.buf) > 0 {
@@ -60,4 +88,13 @@ func runJob(ctx context.Context, job Job, logger *log.Logger) {
 		return
 	}
 	logger.Printf("finish job L%d: exit 0 (%s)", job.Line, duration)
+}
+
+func assignToJobObject(job windows.Handle, pid int) error {
+	proc, err := windows.OpenProcess(windows.PROCESS_SET_QUOTA|windows.PROCESS_TERMINATE, false, uint32(pid))
+	if err != nil {
+		return err
+	}
+	defer windows.CloseHandle(proc)
+	return windows.AssignProcessToJobObject(job, proc)
 }

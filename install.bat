@@ -43,7 +43,7 @@ cd /d "%TARGET%"
 wincron.exe install || goto :fail
 if not exist crontab.txt (
   >crontab.txt  echo # e.g.: run a backup of all your user accounts at 5 a.m every week with:
-  >>crontab.txt echo # 0 5 * * 1 tar -zcf /var/backups/home.tgz /home/
+  >>crontab.txt echo # 0 5 * * 1 tar -zcf C:\backups\home.tgz C:\Users
   >>crontab.txt echo.
 )
 wincron.exe start
