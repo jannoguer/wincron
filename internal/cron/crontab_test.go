@@ -106,6 +106,39 @@ func TestLoadFileReboot(t *testing.T) {
 	}
 }
 
+func TestLoadFileUserField(t *testing.T) {
+	tests := []struct {
+		name, content, wantUser, wantCommand string
+	}{
+		{"schedule job", "0 5 * * 1 user=jan backup.exe --full\n", "jan", "backup.exe --full"},
+		{"domain user", "* * * * * user=CORP\\jan sync.exe\n", "CORP\\jan", "sync.exe"},
+		{"uppercase key", "* * * * * USER=jan sync.exe\n", "jan", "sync.exe"},
+		{"reboot job", "@reboot user=jan agent.exe\n", "jan", "agent.exe"},
+		{"no user field", "* * * * * echo user=less\n", "", "echo user=less"},
+		{"double-quoted user", "* * * * * user=\"Jan Noguer\" powershell.exe -File test.ps1\n", "Jan Noguer", "powershell.exe -File test.ps1"},
+		{"single-quoted user", "* * * * * user='Jan Noguer' powershell.exe -File test.ps1\n", "Jan Noguer", "powershell.exe -File test.ps1"},
+		{"quoted reboot", "@reboot user=\"Jan Noguer\" agent.exe\n", "Jan Noguer", "agent.exe"},
+		{"quoted domain", "* * * * * user=\"CORP\\Jan Noguer\" sync.exe\n", "CORP\\Jan Noguer", "sync.exe"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			jobs, err := LoadFile(writeCrontab(t, tt.content))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(jobs) != 1 {
+				t.Fatalf("got %d jobs, want 1", len(jobs))
+			}
+			if jobs[0].User != tt.wantUser {
+				t.Errorf("User = %q, want %q", jobs[0].User, tt.wantUser)
+			}
+			if jobs[0].Command != tt.wantCommand {
+				t.Errorf("Command = %q, want %q", jobs[0].Command, tt.wantCommand)
+			}
+		})
+	}
+}
+
 func TestLoadFileErrors(t *testing.T) {
 	tests := []struct {
 		name, content, wantErr string
@@ -116,6 +149,14 @@ func TestLoadFileErrors(t *testing.T) {
 		{"single word", "1FOO=bar\n", "expected 5 schedule fields and a command"},
 		{"bad minute", "61 * * * * foo.exe\n", "minute"},
 		{"bad day of week", "* * * * 9 foo.exe\n", "day of week"},
+		{"empty user", "* * * * * user= foo.exe\n", "user= requires a name"},
+		{"user without command", "* * * * * user=jan\n", "expected a command after user=jan"},
+		{"reboot user without command", "@reboot user=jan\n", "@reboot requires a command"},
+		{"unterminated double quote", `* * * * * user="Jan Noguer foo.exe` + "\n", "unterminated"},
+		{"unterminated single quote", "* * * * * user='Jan Noguer foo.exe\n", "unterminated"},
+		{"empty quoted user", `* * * * * user="" foo.exe` + "\n", "user= requires a name"},
+		{"empty single-quoted user", "* * * * * user='' foo.exe\n", "user= requires a name"},
+		{"text after quoted user", `* * * * * user="jan"foo.exe` + "\n", "unexpected text after quoted user="},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -198,7 +239,7 @@ func TestIsEnvName(t *testing.T) {
 	}
 }
 
-func TestCommandText(t *testing.T) {
+func TestSkipFields(t *testing.T) {
 	tests := []struct {
 		line   string
 		fields int
@@ -210,8 +251,9 @@ func TestCommandText(t *testing.T) {
 		{"0\t5\t*\t*\t1\tcmd.exe", 5, "cmd.exe"},
 	}
 	for _, tt := range tests {
-		if got := commandText(tt.line, tt.fields); got != tt.want {
-			t.Errorf("commandText(%q, %d) = %q, want %q", tt.line, tt.fields, got, tt.want)
+		off := skipFields(tt.line, tt.fields)
+		if got := tt.line[off:]; got != tt.want {
+			t.Errorf("skipFields(%q, %d) -> %q, want %q", tt.line, tt.fields, got, tt.want)
 		}
 	}
 }

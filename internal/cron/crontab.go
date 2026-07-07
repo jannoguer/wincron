@@ -17,6 +17,7 @@ type Job struct {
 	Line     int
 	Reboot   bool
 	Envs     []string
+	User     string
 }
 
 func LoadFile(path string) ([]Job, error) {
@@ -45,10 +46,14 @@ func LoadFile(path string) ([]Job, error) {
 			if fields[0] != "@reboot" {
 				return nil, fmt.Errorf("line %d: unsupported nickname %q (only @reboot is supported)", lineNo, fields[0])
 			}
-			if len(fields) < 2 {
+			user, command, err := jobTail(line, 1, lineNo)
+			if err != nil {
+				return nil, err
+			}
+			if command == "" {
 				return nil, fmt.Errorf("line %d: @reboot requires a command", lineNo)
 			}
-			jobs = append(jobs, Job{Reboot: true, Command: commandText(line, 1), Line: lineNo, Envs: snapshot(envs)})
+			jobs = append(jobs, Job{Reboot: true, User: user, Command: command, Line: lineNo, Envs: snapshot(envs)})
 			continue
 		}
 		if len(fields) < scheduleFieldCount+1 {
@@ -58,12 +63,78 @@ func LoadFile(path string) ([]Job, error) {
 		if err != nil {
 			return nil, fmt.Errorf("line %d: %w", lineNo, err)
 		}
-		jobs = append(jobs, Job{Schedule: schedule, Command: commandText(line, scheduleFieldCount), Line: lineNo, Envs: snapshot(envs)})
+		user, command, err := jobTail(line, scheduleFieldCount, lineNo)
+		if err != nil {
+			return nil, err
+		}
+		if command == "" {
+			return nil, fmt.Errorf("line %d: expected a command after user=%s", lineNo, user)
+		}
+		jobs = append(jobs, Job{Schedule: schedule, User: user, Command: command, Line: lineNo, Envs: snapshot(envs)})
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
 	return jobs, nil
+}
+
+// jobTail parses the optional user= field and the command after the first
+// n fields. command is empty when nothing follows.
+func jobTail(line string, fields, lineNo int) (user, command string, err error) {
+	user, cmdOff, err := parseUserField(line, skipFields(line, fields), lineNo)
+	if err != nil {
+		return "", "", err
+	}
+	return user, line[cmdOff:], nil
+}
+
+// parseUserField extracts an optional user=NAME token at pos.
+func parseUserField(line string, pos, lineNo int) (user string, cmdOff int, err error) {
+	if pos >= len(line) {
+		return "", pos, nil
+	}
+	rest, ok := cutFold(line[pos:], "user=")
+	if !ok {
+		return "", pos, nil
+	}
+	valueStart := pos + len("user=")
+	if rest == "" {
+		return "", pos, fmt.Errorf("line %d: user= requires a name", lineNo)
+	}
+	if rest[0] == '"' || rest[0] == '\'' {
+		quote := rest[0]
+		closeIdx := strings.IndexByte(rest[1:], quote)
+		if closeIdx < 0 {
+			return "", pos, fmt.Errorf("line %d: unterminated %c in user= value", lineNo, quote)
+		}
+		user = rest[1 : 1+closeIdx]
+		if user == "" {
+			return "", pos, fmt.Errorf("line %d: user= requires a name", lineNo)
+		}
+		afterQuote := valueStart + 1 + closeIdx + 1
+		if afterQuote < len(line) {
+			if r, _ := utf8.DecodeRuneInString(line[afterQuote:]); !unicode.IsSpace(r) {
+				return "", pos, fmt.Errorf("line %d: unexpected text after quoted user= value", lineNo)
+			}
+		}
+		return user, skipSpace(line, afterQuote), nil
+	}
+	end := strings.IndexFunc(rest, unicode.IsSpace)
+	if end < 0 {
+		return rest, len(line), nil
+	}
+	user = rest[:end]
+	if user == "" {
+		return "", pos, fmt.Errorf("line %d: user= requires a name", lineNo)
+	}
+	return user, skipSpace(line, valueStart+end), nil
+}
+
+func cutFold(s, prefix string) (string, bool) {
+	if len(s) >= len(prefix) && strings.EqualFold(s[:len(prefix)], prefix) {
+		return s[len(prefix):], true
+	}
+	return "", false
 }
 
 func parseEnv(line string) (string, bool) {
@@ -101,9 +172,10 @@ func snapshot(envs []string) []string {
 	return append([]string(nil), envs...)
 }
 
-func commandText(line string, fieldCount int) string {
+// skipFields returns the byte offset after skipping n fields.
+func skipFields(line string, n int) int {
 	i := 0
-	for field := 0; field < fieldCount; field++ {
+	for field := 0; field < n; field++ {
 		i = skipSpace(line, i)
 		for i < len(line) {
 			r, size := utf8.DecodeRuneInString(line[i:])
@@ -113,7 +185,7 @@ func commandText(line string, fieldCount int) string {
 			i += size
 		}
 	}
-	return line[skipSpace(line, i):]
+	return skipSpace(line, i)
 }
 
 func skipSpace(line string, i int) int {

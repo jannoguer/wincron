@@ -44,7 +44,21 @@ func runJob(ctx context.Context, job Job, logger *log.Logger) {
 	cmd := exec.CommandContext(ctx, shell)
 	cmd.SysProcAttr = &syscall.SysProcAttr{CmdLine: "/C " + job.Command}
 	cmd.WaitDelay = pipeWaitDelay
-	if len(job.Envs) > 0 {
+	if job.User != "" {
+		token, env, err := userContext(job.User)
+		if err != nil {
+			logger.Printf("skip job L%d: run as %q: %v", job.Line, job.User, err)
+			return
+		}
+		defer token.Close()
+		cmd.SysProcAttr.Token = syscall.Token(token)
+		// Keep the console hidden.
+		cmd.SysProcAttr.CreationFlags |= windows.CREATE_NO_WINDOW
+		cmd.Env = append(env, job.Envs...)
+		if profile := envValue(env, "USERPROFILE"); profile != "" {
+			cmd.Dir = profile
+		}
+	} else if len(job.Envs) > 0 {
 		cmd.Env = append(os.Environ(), job.Envs...)
 	}
 
@@ -64,7 +78,11 @@ func runJob(ctx context.Context, job Job, logger *log.Logger) {
 		}
 	}
 
-	logger.Printf("start job L%d: %s", job.Line, job.Command)
+	if job.User != "" {
+		logger.Printf("start job L%d as %s: %s", job.Line, job.User, job.Command)
+	} else {
+		logger.Printf("start job L%d: %s", job.Line, job.Command)
+	}
 	started := time.Now()
 	err := cmd.Start()
 	if err == nil {

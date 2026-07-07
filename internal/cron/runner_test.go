@@ -103,6 +103,41 @@ func TestRunJobCancelDoesNotHang(t *testing.T) {
 	}
 }
 
+// Tests run-as-user path. Needs SE_TCB (run under LocalSystem).
+func TestRunJobAsUserEndToEnd(t *testing.T) {
+	self, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil || !self.User.Sid.IsWellKnown(windows.WinLocalSystemSid) {
+		t.Skip("requires LocalSystem (run with psexec -s)")
+	}
+	var token windows.Token
+	if err := windows.WTSQueryUserToken(windows.WTSGetActiveConsoleSessionId(), &token); err != nil {
+		t.Skipf("no user on console session: %v", err)
+	}
+	tokenUser, err := token.GetTokenUser()
+	token.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	account, _, _, err := tokenUser.User.Sid.LookupAccount("")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The sentinel must come from the child's environment; matching the bare
+	// account name would be satisfied by runJob's own "start job as" line.
+	job := Job{Command: `echo RUNAS:%USERNAME%& if /I "%CD%"=="%USERPROFILE%" echo IN-PROFILE`, Line: 9, User: account}
+	got := runTestJob(t, context.Background(), job)
+	if !strings.Contains(strings.ToLower(got), strings.ToLower("RUNAS:"+account)) {
+		t.Errorf("log %q does not show the job running as %q", got, account)
+	}
+	if !strings.Contains(got, "IN-PROFILE") {
+		t.Errorf("log %q does not show the job starting in the user profile", got)
+	}
+	if !strings.Contains(got, "exit 0") {
+		t.Errorf("log %q does not report success", got)
+	}
+}
+
 func TestJobObjectTerminatesProcess(t *testing.T) {
 	cmd := exec.Command("ping", "-n", "30", "127.0.0.1")
 	if err := cmd.Start(); err != nil {

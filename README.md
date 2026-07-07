@@ -1,7 +1,7 @@
 # wincron - Windows crontab clone in Go.
 
 > [!CAUTION]
-> `wincron` runs as a highly privileged `NT AUTHORITY\SYSTEM` account directly from `C:\Windows\system32`. This grants it full administrative control over the machine and it lacks a standard user environment. Proceed with care.
+> By default, `wincron` runs jobs as the highly privileged `NT AUTHORITY\SYSTEM` account, which grants full administrative control but lacks a standard user profile or `PATH`. Proceed with care, and consider using the `user=NAME` parameter to run jobs with reduced, per-user privileges ([see below](#running-jobs-as-a-user)).
 
 ## Usage
 
@@ -32,6 +32,20 @@ BACKUP_DIR=C:\backups
 0 5 * * 1 backup.exe %BACKUP_DIR%
 ```
 Names must match `[A-Za-z_][A-Za-z0-9_]*`; whitespace around the name and value is trimmed. Assignments only affect jobs defined later in the file.
+
+## Running jobs as a user
+
+Jobs default to `SYSTEM`, but adding `user=NAME` to the schedule runs the job using that specific user's full profile, `PATH`, and environment.
+
+Use the format `* * * * * user=foo command` to assign a job to a specific user. Quote names containing spaces: `user="Jan Noguer"` (single or double quotes).
+
+Crucially, the specified user must already be logged in when the job triggers, otherwise wincron will skip the execution.
+
+The first token after the schedule is treated as a user field only when it starts with `user=` (case-insensitive). To run a command whose first word starts with `user=`, invoke it through `cmd /c`. A standalone `USER=name` line is an environment assignment, not a user field.
+
+Note that `crontab.txt` remains the privilege boundary: jobs still default to `SYSTEM`, so only administrators should be able to edit the file.
+
+Run `Get-LocalUser` to see all users.
 
 ## Logging
 

@@ -48,8 +48,8 @@ if not exist crontab.txt (
 )
 wincron.exe start
 
-:: generate self-deleting, self-elevating uninstaller. it removes only wincron's
-:: own files, then removes the folder if it ends up empty (left alone otherwise).
+:: generate self-deleting, self-elevating uninstaller.
+:: it removes only wincron's own files, then removes the folder if it ends up empty (left alone otherwise).
 (
   echo @echo off
   echo net session ^>nul 2^>^&1 ^|^| ^(
@@ -62,7 +62,7 @@ wincron.exe start
   echo ^(goto^) 2^>nul ^& del /q "%TARGET%\wincron.exe" "%TARGET%\crontab.txt" "%TARGET%\wincron.log" "%TARGET%\wincron.log.1" "%%~f0" 2^>nul ^& rd "%TARGET%" ^>nul 2^>^&1
 ) > uninstall.bat
 
-echo done.
+echo done. Successfully installed at: "%TARGET%"
 pause
 exit /b 0
 
