@@ -40,6 +40,7 @@ func main() {
 	}
 	if isService {
 		if err := runService(crontabPath, logPath); err != nil {
+			reportFatalToEventLog(err)
 			fatal(err)
 		}
 		return

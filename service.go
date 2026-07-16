@@ -3,9 +3,11 @@ package main
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"golang.org/x/sys/windows/svc"
+	"golang.org/x/sys/windows/svc/eventlog"
 	"golang.org/x/sys/windows/svc/mgr"
 
 	"wincron/internal/cron"
@@ -22,10 +24,29 @@ type cronService struct {
 // jobShutdownGrace so a graceful stop never triggers that assumption.
 const startStopWaitHintMillis = 30000
 
+// eventIDFatal is the event ID used for fatal errors reported to the
+// Windows event log. Stderr is not visible for a service, so this is the
+// only trace of a failure that happens before (or instead of) logging to
+// wincron.log.
+const eventIDFatal = 1
+
+// reportFatalToEventLog writes err to the event log under serviceName.
+// Best-effort: if the event source was never registered (e.g. the service
+// was installed by an older wincron, or Open itself fails) this is a no-op.
+func reportFatalToEventLog(err error) {
+	elog, oerr := eventlog.Open(serviceName)
+	if oerr != nil {
+		return
+	}
+	defer elog.Close()
+	_ = elog.Error(eventIDFatal, err.Error())
+}
+
 func (s *cronService) Execute(args []string, requests <-chan svc.ChangeRequest, status chan<- svc.Status) (bool, uint32) {
 	status <- svc.Status{State: svc.StartPending, WaitHint: startStopWaitHintMillis}
 	logger, closer, err := openLogger(s.logPath, false)
 	if err != nil {
+		reportFatalToEventLog(fmt.Errorf("opening log file %s: %w", s.logPath, err))
 		return false, 1
 	}
 	defer closer.Close()
@@ -66,6 +87,17 @@ func connectManager() (*mgr.Mgr, error) {
 	return m, nil
 }
 
+// registerEventSource makes serviceName usable as an event log source, so
+// reportFatalToEventLog can find it. Already being registered (e.g. a
+// reinstall that skipped uninstall) is not an error.
+func registerEventSource() error {
+	err := eventlog.InstallAsEventCreate(serviceName, eventlog.Error|eventlog.Warning|eventlog.Info)
+	if err != nil && !strings.Contains(err.Error(), "already exists") {
+		return fmt.Errorf("registering event source: %w", err)
+	}
+	return nil
+}
+
 func installService(exePath string) error {
 	m, err := connectManager()
 	if err != nil {
@@ -77,6 +109,10 @@ func installService(exePath string) error {
 		StartType:   mgr.StartAutomatic,
 	})
 	if err != nil {
+		return err
+	}
+	if err := registerEventSource(); err != nil {
+		_ = service.Close()
 		return err
 	}
 	return service.Close()
@@ -93,7 +129,11 @@ func uninstallService() error {
 		return err
 	}
 	defer service.Close()
-	return service.Delete()
+	if err := service.Delete(); err != nil {
+		return err
+	}
+	_ = eventlog.Remove(serviceName)
+	return nil
 }
 
 func startService() error {
