@@ -17,8 +17,13 @@ type cronService struct {
 	crontabPath, logPath string
 }
 
+// startStopWaitHintMillis bounds how long SCM waits before assuming a
+// pending start or stop has hung; it should comfortably exceed
+// jobShutdownGrace so a graceful stop never triggers that assumption.
+const startStopWaitHintMillis = 30000
+
 func (s *cronService) Execute(args []string, requests <-chan svc.ChangeRequest, status chan<- svc.Status) (bool, uint32) {
-	status <- svc.Status{State: svc.StartPending}
+	status <- svc.Status{State: svc.StartPending, WaitHint: startStopWaitHintMillis}
 	logger, closer, err := openLogger(s.logPath, false)
 	if err != nil {
 		return false, 1
@@ -38,7 +43,7 @@ func (s *cronService) Execute(args []string, requests <-chan svc.ChangeRequest, 
 		case svc.Interrogate:
 			status <- req.CurrentStatus
 		case svc.Stop, svc.Shutdown:
-			status <- svc.Status{State: svc.StopPending}
+			status <- svc.Status{State: svc.StopPending, WaitHint: startStopWaitHintMillis}
 			cancel()
 			<-done
 			return false, 0
