@@ -17,15 +17,17 @@ wincron.exe version
 
 ## Schedule syntax
 
-Supports numeric 5-field cron expressions (minute, hour, day-of-month, month, day-of-week), plus the `@reboot` nickname:
+Supports numeric 5-field cron expressions (minute, hour, day-of-month, month, day-of-week), named aliases in the month and day-of-week fields, and nicknames:
 ```
 # minute hour day-of-month month day-of-week command
 0 5 * * 1 tar -zcf C:\backups\home.tgz C:\Users
+0 9 * jan-mar mon-fri report.exe
+@daily backup.exe
 @reboot foo.exe
 ```
-`@reboot` jobs run once each time the scheduler starts: at boot, on `wincron.exe start` (or a service restart), and on each foreground `wincron.exe run`. They are not re-run when the crontab is edited.
+Month aliases are `jan`-`dec`; day-of-week aliases are `sun`-`sat` (case-insensitive). They work anywhere a number would, including ranges, lists, and steps (`jan-dec/3`, `mon,wed,fri`).
 
-Not supported: named aliases (`JAN`, `MON`, ...) and other nicknames (`@daily`, `@hourly`, ...).
+Nicknames: `@reboot`, `@yearly` (or `@annually`, `0 0 1 1 *`), `@monthly` (`0 0 1 * *`), `@weekly` (`0 0 * * 0`), `@daily` (or `@midnight`, `0 0 * * *`), `@hourly` (`0 * * * *`). `@reboot` jobs run once each time the scheduler starts: at boot, on `wincron.exe start` (or a service restart), and on each foreground `wincron.exe run`. They are not re-run when the crontab is edited. The other nicknames are ordinary schedules and support `user=` like any other job.
 
 The crontab lives in `crontab.txt` next to the executable (`%ProgramFiles%\wincron\crontab.txt` for a service install). Edits are picked up automatically within a minute; if an edit contains an error, the previous jobs are kept and the error is logged. Commands are executed with `cmd.exe /C`, so anything that works at a cmd prompt (pipes, redirection, `&&`, batch files) works in a job.
 

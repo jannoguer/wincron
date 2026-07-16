@@ -11,6 +11,18 @@ import (
 
 const scheduleFieldCount = 5
 
+// scheduleNicknames maps a nickname to its equivalent 5-field schedule.
+// @reboot has no schedule equivalent and is handled separately.
+var scheduleNicknames = map[string]string{
+	"@hourly":   "0 * * * *",
+	"@daily":    "0 0 * * *",
+	"@midnight": "0 0 * * *",
+	"@weekly":   "0 0 * * 0",
+	"@monthly":  "0 0 1 * *",
+	"@yearly":   "0 0 1 1 *",
+	"@annually": "0 0 1 1 *",
+}
+
 type Job struct {
 	Schedule Schedule
 	Command  string
@@ -43,17 +55,31 @@ func LoadFile(path string) ([]Job, error) {
 		}
 		fields := strings.Fields(line)
 		if strings.HasPrefix(fields[0], "@") {
-			if fields[0] != "@reboot" {
-				return nil, fmt.Errorf("line %d: unsupported nickname %q (only @reboot is supported)", lineNo, fields[0])
+			nickname := strings.ToLower(fields[0])
+			if nickname == "@reboot" {
+				user, command, err := jobTail(line, 1, lineNo)
+				if err != nil {
+					return nil, err
+				}
+				if command == "" {
+					return nil, fmt.Errorf("line %d: @reboot requires a command", lineNo)
+				}
+				jobs = append(jobs, Job{Reboot: true, User: user, Command: command, Line: lineNo, Envs: snapshot(envs)})
+				continue
 			}
-			user, command, err := jobTail(line, 1, lineNo)
+			scheduleSpec, ok := scheduleNicknames[nickname]
+			if !ok {
+				return nil, fmt.Errorf("line %d: unsupported nickname %q", lineNo, fields[0])
+			}
+			schedule, err := ParseSchedule(strings.Fields(scheduleSpec))
+			if err != nil {
+				return nil, fmt.Errorf("line %d: %w", lineNo, err)
+			}
+			job, err := buildScheduledJob(line, lineNo, schedule, 1, fields[0], envs)
 			if err != nil {
 				return nil, err
 			}
-			if command == "" {
-				return nil, fmt.Errorf("line %d: @reboot requires a command", lineNo)
-			}
-			jobs = append(jobs, Job{Reboot: true, User: user, Command: command, Line: lineNo, Envs: snapshot(envs)})
+			jobs = append(jobs, job)
 			continue
 		}
 		if len(fields) < scheduleFieldCount+1 {
@@ -63,19 +89,35 @@ func LoadFile(path string) ([]Job, error) {
 		if err != nil {
 			return nil, fmt.Errorf("line %d: %w", lineNo, err)
 		}
-		user, command, err := jobTail(line, scheduleFieldCount, lineNo)
+		job, err := buildScheduledJob(line, lineNo, schedule, scheduleFieldCount, "", envs)
 		if err != nil {
 			return nil, err
 		}
-		if command == "" {
-			return nil, fmt.Errorf("line %d: expected a command after user=%s", lineNo, user)
-		}
-		jobs = append(jobs, Job{Schedule: schedule, User: user, Command: command, Line: lineNo, Envs: snapshot(envs)})
+		jobs = append(jobs, job)
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
 	return jobs, nil
+}
+
+// buildScheduledJob parses the optional user= field and command starting
+// after skipFields fields. label names the schedule token (a nickname, or
+// "" for the 5-field form, where the length check before the call already
+// rules out an empty command with no user= field) and is only used for the
+// no-command error when there is no user= field to name instead.
+func buildScheduledJob(line string, lineNo int, schedule Schedule, skipFields int, label string, envs []string) (Job, error) {
+	user, command, err := jobTail(line, skipFields, lineNo)
+	if err != nil {
+		return Job{}, err
+	}
+	if command == "" {
+		if user != "" {
+			return Job{}, fmt.Errorf("line %d: expected a command after user=%s", lineNo, user)
+		}
+		return Job{}, fmt.Errorf("line %d: %s requires a command", lineNo, label)
+	}
+	return Job{Schedule: schedule, User: user, Command: command, Line: lineNo, Envs: snapshot(envs)}, nil
 }
 
 // jobTail parses the optional user= field and the command after the first

@@ -106,6 +106,55 @@ func TestLoadFileReboot(t *testing.T) {
 	}
 }
 
+func TestLoadFileNicknames(t *testing.T) {
+	tests := []struct {
+		name, nickname string
+		want           Schedule
+	}{
+		{"hourly", "@hourly", mustParse(t, "0 * * * *")},
+		{"daily", "@daily", mustParse(t, "0 0 * * *")},
+		{"midnight", "@midnight", mustParse(t, "0 0 * * *")},
+		{"weekly", "@weekly", mustParse(t, "0 0 * * 0")},
+		{"monthly", "@monthly", mustParse(t, "0 0 1 * *")},
+		{"yearly", "@yearly", mustParse(t, "0 0 1 1 *")},
+		{"annually", "@annually", mustParse(t, "0 0 1 1 *")},
+		{"uppercase", "@DAILY", mustParse(t, "0 0 * * *")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			jobs, err := LoadFile(writeCrontab(t, tt.nickname+" foo.exe\n"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(jobs) != 1 {
+				t.Fatalf("got %d jobs, want 1", len(jobs))
+			}
+			if jobs[0].Schedule != tt.want {
+				t.Errorf("Schedule = %+v, want %+v", jobs[0].Schedule, tt.want)
+			}
+			if jobs[0].Command != "foo.exe" {
+				t.Errorf("Command = %q, want %q", jobs[0].Command, "foo.exe")
+			}
+		})
+	}
+}
+
+func TestLoadFileNicknameWithUser(t *testing.T) {
+	jobs, err := LoadFile(writeCrontab(t, "@daily user=jan backup.exe\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("got %d jobs, want 1", len(jobs))
+	}
+	if jobs[0].User != "jan" {
+		t.Errorf("User = %q, want %q", jobs[0].User, "jan")
+	}
+	if jobs[0].Command != "backup.exe" {
+		t.Errorf("Command = %q, want %q", jobs[0].Command, "backup.exe")
+	}
+}
+
 func TestLoadFileUserField(t *testing.T) {
 	tests := []struct {
 		name, content, wantUser, wantCommand string
@@ -144,7 +193,8 @@ func TestLoadFileErrors(t *testing.T) {
 		name, content, wantErr string
 	}{
 		{"reboot without command", "@reboot\n", "@reboot requires a command"},
-		{"unsupported nickname", "@daily foo.exe\n", "unsupported nickname"},
+		{"unsupported nickname", "@fortnightly foo.exe\n", "unsupported nickname"},
+		{"nickname without command", "@daily\n", "@daily requires a command"},
 		{"too few fields", "* * * * *\n", "expected 5 schedule fields and a command"},
 		{"single word", "1FOO=bar\n", "expected 5 schedule fields and a command"},
 		{"bad minute", "61 * * * * foo.exe\n", "minute"},

@@ -12,25 +12,36 @@ type Schedule struct {
 	dayOfMonthRestricted, dayOfWeekRestricted  bool
 }
 
+// monthAliases and weekdayAliases let the month and day-of-week fields use
+// the standard three-letter cron names instead of numbers.
+var monthAliases = map[string]int{
+	"JAN": 1, "FEB": 2, "MAR": 3, "APR": 4, "MAY": 5, "JUN": 6,
+	"JUL": 7, "AUG": 8, "SEP": 9, "OCT": 10, "NOV": 11, "DEC": 12,
+}
+
+var weekdayAliases = map[string]int{
+	"SUN": 0, "MON": 1, "TUE": 2, "WED": 3, "THU": 4, "FRI": 5, "SAT": 6,
+}
+
 func ParseSchedule(fields []string) (Schedule, error) {
 	if len(fields) != 5 {
 		return Schedule{}, fmt.Errorf("expected 5 schedule fields, got %d", len(fields))
 	}
 	var s Schedule
 	var err error
-	if s.minute, err = parseField(fields[0], 0, 59); err != nil {
+	if s.minute, err = parseField(fields[0], 0, 59, nil); err != nil {
 		return Schedule{}, fmt.Errorf("minute: %w", err)
 	}
-	if s.hour, err = parseField(fields[1], 0, 23); err != nil {
+	if s.hour, err = parseField(fields[1], 0, 23, nil); err != nil {
 		return Schedule{}, fmt.Errorf("hour: %w", err)
 	}
-	if s.dayOfMonth, err = parseField(fields[2], 1, 31); err != nil {
+	if s.dayOfMonth, err = parseField(fields[2], 1, 31, nil); err != nil {
 		return Schedule{}, fmt.Errorf("day of month: %w", err)
 	}
-	if s.month, err = parseField(fields[3], 1, 12); err != nil {
+	if s.month, err = parseField(fields[3], 1, 12, monthAliases); err != nil {
 		return Schedule{}, fmt.Errorf("month: %w", err)
 	}
-	if s.dayOfWeek, err = parseField(fields[4], 0, 7); err != nil {
+	if s.dayOfWeek, err = parseField(fields[4], 0, 7, weekdayAliases); err != nil {
 		return Schedule{}, fmt.Errorf("day of week: %w", err)
 	}
 	if s.dayOfWeek&(1<<7) != 0 {
@@ -41,7 +52,7 @@ func ParseSchedule(fields []string) (Schedule, error) {
 	return s, nil
 }
 
-func parseField(spec string, lo, hi int) (uint64, error) {
+func parseField(spec string, lo, hi int, aliases map[string]int) (uint64, error) {
 	var mask uint64
 	for _, part := range strings.Split(spec, ",") {
 		rangeSpec, stepSpec, hasStep := strings.Cut(part, "/")
@@ -56,13 +67,13 @@ func parseField(spec string, lo, hi int) (uint64, error) {
 		start, end := lo, hi
 		if rangeSpec != "*" {
 			startSpec, endSpec, hasRange := strings.Cut(rangeSpec, "-")
-			n, err := strconv.Atoi(startSpec)
+			n, err := parseFieldValue(startSpec, aliases)
 			if err != nil {
 				return 0, fmt.Errorf("invalid value %q", part)
 			}
 			start = n
 			if hasRange {
-				n, err := strconv.Atoi(endSpec)
+				n, err := parseFieldValue(endSpec, aliases)
 				if err != nil {
 					return 0, fmt.Errorf("invalid range %q", part)
 				}
@@ -81,6 +92,17 @@ func parseField(spec string, lo, hi int) (uint64, error) {
 		}
 	}
 	return mask, nil
+}
+
+// parseFieldValue resolves a single field value, trying the alias table
+// (case-insensitively) before falling back to a plain number.
+func parseFieldValue(s string, aliases map[string]int) (int, error) {
+	if aliases != nil {
+		if n, ok := aliases[strings.ToUpper(s)]; ok {
+			return n, nil
+		}
+	}
+	return strconv.Atoi(s)
 }
 
 func (s Schedule) Matches(t time.Time) bool {

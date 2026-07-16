@@ -24,33 +24,43 @@ func rangeBits(lo, hi int) uint64 {
 
 func TestParseField(t *testing.T) {
 	tests := []struct {
-		spec   string
-		lo, hi int
-		want   uint64
+		spec    string
+		lo, hi  int
+		aliases map[string]int
+		want    uint64
 	}{
-		{"*", 0, 59, rangeBits(0, 59)},
-		{"*", 1, 12, rangeBits(1, 12)},
-		{"0", 0, 59, bits(0)},
-		{"5", 0, 59, bits(5)},
-		{"59", 0, 59, bits(59)},
-		{"7", 0, 7, bits(7)},
-		{"1-3", 0, 59, bits(1, 2, 3)},
-		{"1-1", 0, 59, bits(1)},
-		{"0-59", 0, 59, rangeBits(0, 59)},
-		{"*/15", 0, 59, bits(0, 15, 30, 45)},
-		{"*/30", 0, 59, bits(0, 30)},
-		{"*/1", 0, 23, rangeBits(0, 23)},
-		{"10-40/10", 0, 59, bits(10, 20, 30, 40)},
-		{"1-5/2", 0, 59, bits(1, 3, 5)},
-		{"5/20", 0, 59, bits(5, 25, 45)},
-		{"0,30", 0, 59, bits(0, 30)},
-		{"1,2,3", 0, 59, bits(1, 2, 3)},
-		{"1-2,50-51", 0, 59, bits(1, 2, 50, 51)},
-		{"*/20,7", 0, 59, bits(0, 7, 20, 40)},
-		{"31", 1, 31, bits(31)},
+		{"*", 0, 59, nil, rangeBits(0, 59)},
+		{"*", 1, 12, nil, rangeBits(1, 12)},
+		{"0", 0, 59, nil, bits(0)},
+		{"5", 0, 59, nil, bits(5)},
+		{"59", 0, 59, nil, bits(59)},
+		{"7", 0, 7, nil, bits(7)},
+		{"1-3", 0, 59, nil, bits(1, 2, 3)},
+		{"1-1", 0, 59, nil, bits(1)},
+		{"0-59", 0, 59, nil, rangeBits(0, 59)},
+		{"*/15", 0, 59, nil, bits(0, 15, 30, 45)},
+		{"*/30", 0, 59, nil, bits(0, 30)},
+		{"*/1", 0, 23, nil, rangeBits(0, 23)},
+		{"10-40/10", 0, 59, nil, bits(10, 20, 30, 40)},
+		{"1-5/2", 0, 59, nil, bits(1, 3, 5)},
+		{"5/20", 0, 59, nil, bits(5, 25, 45)},
+		{"0,30", 0, 59, nil, bits(0, 30)},
+		{"1,2,3", 0, 59, nil, bits(1, 2, 3)},
+		{"1-2,50-51", 0, 59, nil, bits(1, 2, 50, 51)},
+		{"*/20,7", 0, 59, nil, bits(0, 7, 20, 40)},
+		{"31", 1, 31, nil, bits(31)},
+		{"JAN", 1, 12, monthAliases, bits(1)},
+		{"jan", 1, 12, monthAliases, bits(1)},
+		{"DEC", 1, 12, monthAliases, bits(12)},
+		{"JAN,MAR", 1, 12, monthAliases, bits(1, 3)},
+		{"JAN-MAR", 1, 12, monthAliases, bits(1, 2, 3)},
+		{"JAN-DEC/3", 1, 12, monthAliases, bits(1, 4, 7, 10)},
+		{"MON", 0, 7, weekdayAliases, bits(1)},
+		{"SUN", 0, 7, weekdayAliases, bits(0)},
+		{"MON-FRI", 0, 7, weekdayAliases, bits(1, 2, 3, 4, 5)},
 	}
 	for _, tt := range tests {
-		got, err := parseField(tt.spec, tt.lo, tt.hi)
+		got, err := parseField(tt.spec, tt.lo, tt.hi, tt.aliases)
 		if err != nil {
 			t.Errorf("parseField(%q, %d, %d): unexpected error: %v", tt.spec, tt.lo, tt.hi, err)
 			continue
@@ -63,33 +73,38 @@ func TestParseField(t *testing.T) {
 
 func TestParseFieldErrors(t *testing.T) {
 	tests := []struct {
-		spec   string
-		lo, hi int
+		spec    string
+		lo, hi  int
+		aliases map[string]int
 	}{
-		{"60", 0, 59},
-		{"24", 0, 23},
-		{"0", 1, 31},
-		{"32", 1, 31},
-		{"13", 1, 12},
-		{"8", 0, 7},
-		{"-1", 0, 59},
-		{"1-", 0, 59},
-		{"-", 0, 59},
-		{"5-1", 0, 59},
-		{"1-70", 0, 59},
-		{"*/0", 0, 59},
-		{"*/-2", 0, 59},
-		{"*/x", 0, 59},
-		{"1//2", 0, 59},
-		{"a", 0, 59},
-		{"", 0, 59},
-		{",", 0, 59},
-		{"1,", 0, 59},
-		{"1.5", 0, 59},
-		{"1 2", 0, 59},
+		{"60", 0, 59, nil},
+		{"24", 0, 23, nil},
+		{"0", 1, 31, nil},
+		{"32", 1, 31, nil},
+		{"13", 1, 12, nil},
+		{"8", 0, 7, nil},
+		{"-1", 0, 59, nil},
+		{"1-", 0, 59, nil},
+		{"-", 0, 59, nil},
+		{"5-1", 0, 59, nil},
+		{"1-70", 0, 59, nil},
+		{"*/0", 0, 59, nil},
+		{"*/-2", 0, 59, nil},
+		{"*/x", 0, 59, nil},
+		{"1//2", 0, 59, nil},
+		{"a", 0, 59, nil},
+		{"", 0, 59, nil},
+		{",", 0, 59, nil},
+		{"1,", 0, 59, nil},
+		{"1.5", 0, 59, nil},
+		{"1 2", 0, 59, nil},
+		{"MON", 0, 59, nil}, // alias not valid outside its own field
+		{"JAN", 1, 12, nil}, // alias not valid outside its own field
+		{"XXX", 1, 12, monthAliases},
+		{"JAN", 0, 7, weekdayAliases}, // month alias not valid in weekday field
 	}
 	for _, tt := range tests {
-		if _, err := parseField(tt.spec, tt.lo, tt.hi); err == nil {
+		if _, err := parseField(tt.spec, tt.lo, tt.hi, tt.aliases); err == nil {
 			t.Errorf("parseField(%q, %d, %d): expected error, got none", tt.spec, tt.lo, tt.hi)
 		}
 	}
@@ -147,6 +162,19 @@ func TestParseScheduleSundayAliases(t *testing.T) {
 	}
 	if s.dayOfWeek != bits(0, 5, 6) {
 		t.Errorf("day-of-week 5-7 parsed as %b, want %b", s.dayOfWeek, bits(0, 5, 6))
+	}
+}
+
+func TestParseScheduleNamedAliases(t *testing.T) {
+	s, err := ParseSchedule([]string{"0", "0", "*", "Jan", "Mon-Fri"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.month != bits(1) {
+		t.Errorf("month = %b, want January bit %b", s.month, bits(1))
+	}
+	if s.dayOfWeek != bits(1, 2, 3, 4, 5) {
+		t.Errorf("day-of-week = %b, want Mon-Fri bits %b", s.dayOfWeek, bits(1, 2, 3, 4, 5))
 	}
 }
 
