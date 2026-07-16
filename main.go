@@ -6,11 +6,16 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 
 	"golang.org/x/sys/windows/svc"
 
 	"wincron/internal/cron"
 )
+
+// version is set via -ldflags "-X main.version=..." for tagged releases.
+// Local builds fall back to the VCS revision Go embeds automatically.
+var version = "dev"
 
 const usageText = `usage: wincron <command>
 
@@ -22,6 +27,7 @@ commands:
   uninstall  remove the Windows service
   start      start the service
   stop       stop the service
+  version    print the wincron version
 
   -h, --help show this help message`
 
@@ -68,6 +74,8 @@ func main() {
 		err = startService()
 	case "stop":
 		err = stopService()
+	case "version":
+		fmt.Println(printableVersion())
 	default:
 		fmt.Fprintln(os.Stderr, usageText)
 		os.Exit(2)
@@ -105,6 +113,42 @@ func runForeground(crontabPath, logPath string) error {
 	defer stop()
 	cron.NewScheduler(crontabPath, logger).Run(ctx)
 	return nil
+}
+
+// printableVersion returns the release-stamped version, or, for a local
+// "dev" build, the VCS revision Go embeds automatically when building
+// inside a git checkout.
+func printableVersion() string {
+	if version != "dev" {
+		return version
+	}
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return version
+	}
+	for _, s := range info.Settings {
+		if s.Key != "vcs.revision" {
+			continue
+		}
+		rev := s.Value
+		if len(rev) > 12 {
+			rev = rev[:12]
+		}
+		if dirty := buildSetting(info, "vcs.modified"); dirty == "true" {
+			rev += "-dirty"
+		}
+		return version + "+" + rev
+	}
+	return version
+}
+
+func buildSetting(info *debug.BuildInfo, key string) string {
+	for _, s := range info.Settings {
+		if s.Key == key {
+			return s.Value
+		}
+	}
+	return ""
 }
 
 func fatal(err error) {

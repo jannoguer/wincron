@@ -10,6 +10,11 @@ To print the help menu, run:
 wincron.exe --help
 ```
 
+To print the installed version, run:
+```bat
+wincron.exe version
+```
+
 ## Schedule syntax
 
 Supports numeric 5-field cron expressions (minute, hour, day-of-month, month, day-of-week), plus the `@reboot` nickname:

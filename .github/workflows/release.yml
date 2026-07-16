@@ -46,7 +46,7 @@ jobs:
         run: |
           version="${GITHUB_REF_NAME#v}"
           for arch in amd64 arm64 386; do
-            GOARCH="$arch" go build -ldflags "-s -w" -trimpath -o wincron.exe .
+            GOARCH="$arch" go build -ldflags "-s -w -X main.version=${version}" -trimpath -o wincron.exe .
             zip "wincron-${version}-windows-${arch}.zip" wincron.exe install.bat README.md LICENSE.md
             rm wincron.exe
           done
