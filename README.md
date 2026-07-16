@@ -24,6 +24,8 @@ Not supported: named aliases (`JAN`, `MON`, ...) and other nicknames (`@daily`, 
 
 The crontab lives in `crontab.txt` next to the executable (`%ProgramFiles%\wincron\crontab.txt` for a service install). Edits are picked up automatically within a minute; if an edit contains an error, the previous jobs are kept and the error is logged. Commands are executed with `cmd.exe /C`, so anything that works at a cmd prompt (pipes, redirection, `&&`, batch files) works in a job.
 
+A job and everything it spawns are terminated as a group once the job finishes, so a command that launches a background process (`start /b foo.exe`) does not leave it running afterward. Design jobs to run to completion rather than to detach a long-lived process.
+
 ## Environment variables
 
 Lines of the form `NAME=value` set environment variables for every job below them, on top of the service's own environment:

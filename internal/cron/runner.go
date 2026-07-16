@@ -71,12 +71,18 @@ func runJob(ctx context.Context, job Job, logger *log.Logger) {
 	// Killing cmd.exe alone leaves its children running, so on cancellation
 	// terminate the whole tree through a job object. Kill remains the
 	// fallback in case termination fails or assignment never happened.
+	// KILL_ON_JOB_CLOSE also ties any descendant's lifetime to this run: it
+	// is terminated when the deferred CloseHandle below runs, so nothing a
+	// job spawns can outlive it, and a hard-killed service still cleans up.
 	killJob, killJobErr := windows.CreateJobObject(nil, nil)
 	if killJobErr == nil {
 		defer windows.CloseHandle(killJob)
 		cmd.Cancel = func() error {
 			_ = windows.TerminateJobObject(killJob, 1)
 			return cmd.Process.Kill()
+		}
+		if err := setKillOnClose(killJob); err != nil {
+			logger.Printf("job L%d: cannot set kill-on-close, descendants may outlive the run: %v", job.Line, err)
 		}
 		// Start suspended so the process cannot spawn children before it is
 		// assigned to the job object; a child spawned in that window would
@@ -116,6 +122,23 @@ func runJob(ctx context.Context, job Job, logger *log.Logger) {
 		return
 	}
 	logger.Printf("finish job L%d: exit 0 (%s)", job.Line, duration)
+}
+
+// setKillOnClose configures the job object to terminate every process it
+// contains as soon as its last handle closes.
+func setKillOnClose(job windows.Handle) error {
+	info := windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION{
+		BasicLimitInformation: windows.JOBOBJECT_BASIC_LIMIT_INFORMATION{
+			LimitFlags: windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+		},
+	}
+	_, err := windows.SetInformationJobObject(
+		job,
+		windows.JobObjectExtendedLimitInformation,
+		uintptr(unsafe.Pointer(&info)),
+		uint32(unsafe.Sizeof(info)),
+	)
+	return err
 }
 
 func assignToJobObject(job windows.Handle, pid int) error {
