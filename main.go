@@ -128,7 +128,7 @@ func runForeground(crontabPath, logPath string) error {
 	if err != nil {
 		return err
 	}
-	defer closer.Close()
+	defer func() { _ = closer.Close() }()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	cron.NewScheduler(crontabPath, logger).Run(ctx)

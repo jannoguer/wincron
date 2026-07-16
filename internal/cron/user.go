@@ -21,7 +21,7 @@ func userContext(user string) (windows.Token, []string, error) {
 	}
 	env, err := environForToken(token)
 	if err != nil {
-		token.Close()
+		_ = token.Close()
 		return 0, nil, fmt.Errorf("reading user environment: %w", err)
 	}
 	return token, env, nil
@@ -47,19 +47,19 @@ func findSessionToken(user string) (windows.Token, error) {
 			continue
 		}
 		if !tokenBelongsTo(token, user) {
-			token.Close()
+			_ = token.Close()
 			continue
 		}
 		if session.State == windows.WTSActive {
 			if disconnected != 0 {
-				disconnected.Close()
+				_ = disconnected.Close()
 			}
 			return token, nil
 		}
 		if disconnected == 0 {
 			disconnected = token
 		} else {
-			token.Close()
+			_ = token.Close()
 		}
 	}
 	if disconnected != 0 {
@@ -87,7 +87,7 @@ func environForToken(token windows.Token) ([]string, error) {
 	if err := windows.CreateEnvironmentBlock(&block, token, false); err != nil {
 		return nil, err
 	}
-	defer windows.DestroyEnvironmentBlock(block)
+	defer func() { _ = windows.DestroyEnvironmentBlock(block) }()
 	return parseEnvBlock(block), nil
 }
 

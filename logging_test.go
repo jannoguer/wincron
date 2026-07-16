@@ -23,7 +23,7 @@ func TestRotatingWriterRotatesAtMaxSize(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	first := strings.Repeat("a", 60)
 	second := strings.Repeat("b", 60)
@@ -63,7 +63,7 @@ func TestRotatingWriterFirstOversizedWrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	// A single write larger than the limit into an empty file must not
 	// rotate first, or nothing would ever be written.
@@ -99,7 +99,7 @@ func TestRotatingWriterResumesExistingFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	if _, err := w.Write([]byte(strings.Repeat("n", 20))); err != nil {
 		t.Fatal(err)
@@ -118,7 +118,7 @@ func TestRotatingWriterFailureCooldown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	if _, err := w.Write([]byte("0123456789")); err != nil {
 		t.Fatal(err)

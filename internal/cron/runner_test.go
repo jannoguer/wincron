@@ -35,8 +35,8 @@ func TestCappedBuffer(t *testing.T) {
 
 func TestCappedBufferPartialChunk(t *testing.T) {
 	b := cappedBuffer{max: 4}
-	b.Write([]byte("ab"))
-	b.Write([]byte("cdef"))
+	_, _ = b.Write([]byte("ab"))
+	_, _ = b.Write([]byte("cdef"))
 	if got := string(b.buf); got != "abcd" {
 		t.Errorf("buf = %q, want %q", got, "abcd")
 	}
@@ -119,7 +119,7 @@ func TestRunJobAsUserEndToEnd(t *testing.T) {
 		t.Skipf("no user on console session: %v", err)
 	}
 	tokenUser, err := token.GetTokenUser()
-	token.Close()
+	_ = token.Close()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -210,13 +210,13 @@ func TestJobObjectTerminatesProcess(t *testing.T) {
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	defer cmd.Process.Kill()
+	defer func() { _ = cmd.Process.Kill() }()
 
 	job, err := windows.CreateJobObject(nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer windows.CloseHandle(job)
+	defer func() { _ = windows.CloseHandle(job) }()
 	if err := assignToJobObject(job, cmd.Process.Pid); err != nil {
 		t.Fatal(err)
 	}

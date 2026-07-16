@@ -52,7 +52,7 @@ func runJob(ctx context.Context, job Job, logger *log.Logger) {
 			logger.Printf("skip job L%d: run as %q: %v", job.Line, job.User, err)
 			return
 		}
-		defer token.Close()
+		defer func() { _ = token.Close() }()
 		cmd.SysProcAttr.Token = syscall.Token(token)
 		// Keep the console hidden.
 		cmd.SysProcAttr.CreationFlags |= windows.CREATE_NO_WINDOW
@@ -76,7 +76,7 @@ func runJob(ctx context.Context, job Job, logger *log.Logger) {
 	// job spawns can outlive it, and a hard-killed service still cleans up.
 	killJob, killJobErr := windows.CreateJobObject(nil, nil)
 	if killJobErr == nil {
-		defer windows.CloseHandle(killJob)
+		defer func() { _ = windows.CloseHandle(killJob) }()
 		cmd.Cancel = func() error {
 			_ = windows.TerminateJobObject(killJob, 1)
 			return cmd.Process.Kill()
@@ -146,7 +146,7 @@ func assignToJobObject(job windows.Handle, pid int) error {
 	if err != nil {
 		return err
 	}
-	defer windows.CloseHandle(proc)
+	defer func() { _ = windows.CloseHandle(proc) }()
 	return windows.AssignProcessToJobObject(job, proc)
 }
 
@@ -158,7 +158,7 @@ func resumeMainThread(pid int) error {
 	if err != nil {
 		return err
 	}
-	defer windows.CloseHandle(snapshot)
+	defer func() { _ = windows.CloseHandle(snapshot) }()
 
 	var te windows.ThreadEntry32
 	te.Size = uint32(unsafe.Sizeof(te))
@@ -172,7 +172,7 @@ func resumeMainThread(pid int) error {
 			return oerr
 		}
 		_, rerr := windows.ResumeThread(thread)
-		windows.CloseHandle(thread)
+		_ = windows.CloseHandle(thread)
 		if rerr != nil {
 			return rerr
 		}

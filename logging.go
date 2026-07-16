@@ -28,7 +28,7 @@ func newRotatingWriter(path string, maxSize int64) (*rotatingWriter, error) {
 	}
 	info, err := f.Stat()
 	if err != nil {
-		f.Close()
+		_ = f.Close()
 		return nil, err
 	}
 	return &rotatingWriter{path: path, f: f, size: info.Size(), maxSize: maxSize}, nil
@@ -49,8 +49,8 @@ func (w *rotatingWriter) rotate() {
 	if !w.lastFail.IsZero() && time.Since(w.lastFail) < rotateRetryCooldown {
 		return
 	}
-	w.f.Close()
-	os.Remove(w.path + ".1")
+	_ = w.f.Close()
+	_ = os.Remove(w.path + ".1")
 	if err := os.Rename(w.path, w.path+".1"); err != nil {
 		w.reopen(w.path, w.size)
 		w.lastFail = time.Now()

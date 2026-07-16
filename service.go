@@ -38,7 +38,7 @@ func reportFatalToEventLog(err error) {
 	if oerr != nil {
 		return
 	}
-	defer elog.Close()
+	defer func() { _ = elog.Close() }()
 	_ = elog.Error(eventIDFatal, err.Error())
 }
 
@@ -49,7 +49,7 @@ func (s *cronService) Execute(args []string, requests <-chan svc.ChangeRequest, 
 		reportFatalToEventLog(fmt.Errorf("opening log file %s: %w", s.logPath, err))
 		return false, 1
 	}
-	defer closer.Close()
+	defer func() { _ = closer.Close() }()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -156,7 +156,7 @@ func uninstallService() error {
 	if err != nil {
 		return err
 	}
-	defer service.Close()
+	defer func() { _ = service.Close() }()
 	if err := service.Delete(); err != nil {
 		return err
 	}
@@ -174,7 +174,7 @@ func startService() error {
 	if err != nil {
 		return err
 	}
-	defer service.Close()
+	defer func() { _ = service.Close() }()
 	return service.Start()
 }
 
@@ -188,7 +188,7 @@ func stopService() error {
 	if err != nil {
 		return err
 	}
-	defer service.Close()
+	defer func() { _ = service.Close() }()
 	state, err := service.Control(svc.Stop)
 	if err != nil {
 		return err
