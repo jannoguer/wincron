@@ -31,6 +31,8 @@ Nicknames: `@reboot`, `@yearly` (or `@annually`, `0 0 1 1 *`), `@monthly` (`0 0 
 
 The crontab lives in `crontab.txt` next to the executable (`%ProgramFiles%\wincron\crontab.txt` for a service install). Edits are picked up automatically within a minute; if an edit contains an error, the previous jobs are kept and the error is logged. Commands are executed with `cmd.exe /C`, so anything that works at a cmd prompt (pipes, redirection, `&&`, batch files) works in a job.
 
+Run `wincron.exe edit` to open the crontab in `%EDITOR%` (or Notepad if unset) and validate it on save. For a service install this needs an elevated shell, since `crontab.txt` lives under `%ProgramFiles%`.
+
 A job and everything it spawns are terminated as a group once the job finishes, so a command that launches a background process (`start /b foo.exe`) does not leave it running afterward. Design jobs to run to completion rather than to detach a long-lived process.
 
 ## Environment variables
