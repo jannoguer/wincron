@@ -68,12 +68,9 @@ func runJob(ctx context.Context, job Job, logger *log.Logger) {
 	cmd.Stdout = &out
 	cmd.Stderr = &out
 
-	// Killing cmd.exe alone leaves its children running, so on cancellation
-	// terminate the whole tree through a job object. Kill remains the
-	// fallback in case termination fails or assignment never happened.
-	// KILL_ON_JOB_CLOSE also ties any descendant's lifetime to this run: it
-	// is terminated when the deferred CloseHandle below runs, so nothing a
-	// job spawns can outlive it, and a hard-killed service still cleans up.
+	// A job object tracks the whole process tree: cancellation terminates it,
+	// and kill-on-close reaps survivors when the deferred CloseHandle runs
+	// (or the service itself dies). Kill remains the fallback.
 	killJob, killJobErr := windows.CreateJobObject(nil, nil)
 	if killJobErr == nil {
 		defer func() { _ = windows.CloseHandle(killJob) }()
@@ -84,9 +81,8 @@ func runJob(ctx context.Context, job Job, logger *log.Logger) {
 		if err := setKillOnClose(killJob); err != nil {
 			logger.Printf("job L%d: cannot set kill-on-close, descendants may outlive the run: %v", job.Line, err)
 		}
-		// Start suspended so the process cannot spawn children before it is
-		// assigned to the job object; a child spawned in that window would
-		// escape tree termination.
+		// Start suspended: a child spawned before assignment to the job
+		// object would escape tree termination.
 		cmd.SysProcAttr.CreationFlags |= windows.CREATE_SUSPENDED
 	}
 
@@ -150,9 +146,8 @@ func assignToJobObject(job windows.Handle, pid int) error {
 	return windows.AssignProcessToJobObject(job, proc)
 }
 
-// resumeMainThread resumes every thread owned by pid. Used to release a
-// process started with CREATE_SUSPENDED once it has been assigned to a job
-// object, so no window exists where it could spawn an untracked child.
+// resumeMainThread resumes every thread owned by pid, releasing a process
+// started with CREATE_SUSPENDED.
 func resumeMainThread(pid int) error {
 	snapshot, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPTHREAD, 0)
 	if err != nil {

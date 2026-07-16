@@ -11,8 +11,8 @@ import (
 
 const scheduleFieldCount = 5
 
-// scheduleNicknames maps a nickname to its equivalent 5-field schedule.
-// @reboot has no schedule equivalent and is handled separately.
+// scheduleNicknames maps nicknames to 5-field schedules; @reboot has no
+// equivalent and is handled separately.
 var scheduleNicknames = map[string]string{
 	"@hourly":   "0 * * * *",
 	"@daily":    "0 0 * * *",
@@ -101,11 +101,9 @@ func LoadFile(path string) ([]Job, error) {
 	return jobs, nil
 }
 
-// buildScheduledJob parses the optional user= field and command starting
-// after skipFields fields. label names the schedule token (a nickname, or
-// "" for the 5-field form, where the length check before the call already
-// rules out an empty command with no user= field) and is only used for the
-// no-command error when there is no user= field to name instead.
+// buildScheduledJob parses the optional user= field and command after the
+// first skipFields fields; label names the schedule token in the no-command
+// error.
 func buildScheduledJob(line string, lineNo int, schedule Schedule, skipFields int, label string, envs []string) (Job, error) {
 	user, command, err := jobTail(line, skipFields, lineNo)
 	if err != nil {

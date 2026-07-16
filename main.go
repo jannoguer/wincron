@@ -14,8 +14,7 @@ import (
 	"wincron/internal/cron"
 )
 
-// version is set via -ldflags "-X main.version=..." for tagged releases.
-// Local builds fall back to the VCS revision Go embeds automatically.
+// version is stamped via -ldflags "-X main.version=..." in release builds.
 var version = "dev"
 
 const usageText = `usage: wincron <command>
@@ -98,9 +97,8 @@ func list(crontabPath string) error {
 	return err
 }
 
-// edit opens crontabPath in %EDITOR% (or notepad if unset), waits for the
-// editor to exit, then validates the result the same way "validate" does.
-// EDITOR is a single executable; wrap it in a script for extra arguments.
+// edit opens crontabPath in %EDITOR% (notepad if unset) and validates the
+// result. EDITOR is a single executable; wrap it in a script for arguments.
 func edit(crontabPath string) error {
 	editor := os.Getenv("EDITOR")
 	if editor == "" {
@@ -135,9 +133,8 @@ func runForeground(crontabPath, logPath string) error {
 	return nil
 }
 
-// printableVersion returns the release-stamped version, or, for a local
-// "dev" build, the VCS revision Go embeds automatically when building
-// inside a git checkout.
+// printableVersion returns the stamped version, or "dev" plus the VCS
+// revision Go embeds when building inside a git checkout.
 func printableVersion() string {
 	if version != "dev" {
 		return version
@@ -146,20 +143,17 @@ func printableVersion() string {
 	if !ok {
 		return version
 	}
-	for _, s := range info.Settings {
-		if s.Key != "vcs.revision" {
-			continue
-		}
-		rev := s.Value
-		if len(rev) > 12 {
-			rev = rev[:12]
-		}
-		if dirty := buildSetting(info, "vcs.modified"); dirty == "true" {
-			rev += "-dirty"
-		}
-		return version + "+" + rev
+	rev := buildSetting(info, "vcs.revision")
+	if rev == "" {
+		return version
 	}
-	return version
+	if len(rev) > 12 {
+		rev = rev[:12]
+	}
+	if buildSetting(info, "vcs.modified") == "true" {
+		rev += "-dirty"
+	}
+	return version + "+" + rev
 }
 
 func buildSetting(info *debug.BuildInfo, key string) string {

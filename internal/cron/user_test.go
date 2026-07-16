@@ -55,12 +55,9 @@ func TestEnvValue(t *testing.T) {
 func TestTokenBelongsTo(t *testing.T) {
 	token := windows.GetCurrentProcessToken()
 	if tokenUser, err := token.GetTokenUser(); err == nil && tokenUser.User.Sid.IsWellKnown(windows.WinLocalSystemSid) {
-		// Under SYSTEM (e.g. via psexec -s), %USERNAME% reports the
-		// machine account (COMPUTERNAME$), not what LookupAccount
-		// resolves for the SYSTEM SID ("SYSTEM"/"NT AUTHORITY"). Real
-		// jobs only ever match tokenBelongsTo against real user session
-		// tokens, never the service's own SYSTEM token, so this is a
-		// test-environment mismatch, not a tokenBelongsTo bug.
+		// Under SYSTEM, %USERNAME% is the machine account (COMPUTERNAME$),
+		// not what LookupAccount resolves for the SYSTEM SID; production
+		// only matches tokenBelongsTo against real user session tokens.
 		t.Skip("USERNAME does not match LookupAccount for the SYSTEM account")
 	}
 	name := os.Getenv("USERNAME")

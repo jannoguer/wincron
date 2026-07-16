@@ -12,8 +12,7 @@ type Schedule struct {
 	dayOfMonthRestricted, dayOfWeekRestricted  bool
 }
 
-// monthAliases and weekdayAliases let the month and day-of-week fields use
-// the standard three-letter cron names instead of numbers.
+// Standard three-letter cron names for the month and day-of-week fields.
 var monthAliases = map[string]int{
 	"JAN": 1, "FEB": 2, "MAR": 3, "APR": 4, "MAY": 5, "JUN": 6,
 	"JUL": 7, "AUG": 8, "SEP": 9, "OCT": 10, "NOV": 11, "DEC": 12,
@@ -94,8 +93,8 @@ func parseField(spec string, lo, hi int, aliases map[string]int) (uint64, error)
 	return mask, nil
 }
 
-// parseFieldValue resolves a single field value, trying the alias table
-// (case-insensitively) before falling back to a plain number.
+// parseFieldValue resolves a value via the alias table (case-insensitive)
+// before falling back to a plain number.
 func parseFieldValue(s string, aliases map[string]int) (int, error) {
 	if aliases != nil {
 		if n, ok := aliases[strings.ToUpper(s)]; ok {

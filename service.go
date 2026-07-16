@@ -19,20 +19,14 @@ type cronService struct {
 	crontabPath, logPath string
 }
 
-// startStopWaitHintMillis bounds how long SCM waits before assuming a
-// pending start or stop has hung; it should comfortably exceed
-// jobShutdownGrace so a graceful stop never triggers that assumption.
+// startStopWaitHintMillis tells SCM how long a pending start or stop may
+// take; it must exceed jobShutdownGrace or a graceful stop looks hung.
 const startStopWaitHintMillis = 30000
 
-// eventIDFatal is the event ID used for fatal errors reported to the
-// Windows event log. Stderr is not visible for a service, so this is the
-// only trace of a failure that happens before (or instead of) logging to
-// wincron.log.
 const eventIDFatal = 1
 
-// reportFatalToEventLog writes err to the event log under serviceName.
-// Best-effort: if the event source was never registered (e.g. the service
-// was installed by an older wincron, or Open itself fails) this is a no-op.
+// reportFatalToEventLog best-effort reports err to the Windows event log,
+// the only visible trace when the service fails before wincron.log is usable.
 func reportFatalToEventLog(err error) {
 	elog, oerr := eventlog.Open(serviceName)
 	if oerr != nil {
@@ -87,9 +81,8 @@ func connectManager() (*mgr.Mgr, error) {
 	return m, nil
 }
 
-// registerEventSource makes serviceName usable as an event log source, so
-// reportFatalToEventLog can find it. Already being registered (e.g. a
-// reinstall that skipped uninstall) is not an error.
+// registerEventSource registers serviceName as an event log source; being
+// registered already (a reinstall) is not an error.
 func registerEventSource() error {
 	err := eventlog.InstallAsEventCreate(serviceName, eventlog.Error|eventlog.Warning|eventlog.Info)
 	if err != nil && !strings.Contains(err.Error(), "already exists") {
@@ -98,15 +91,13 @@ func registerEventSource() error {
 	return nil
 }
 
-// recoveryResetPeriodSeconds is how long the service must run without
-// failing before SCM resets the failure count back to the first recovery
-// action.
+// recoveryResetPeriodSeconds is how long without failures before SCM resets
+// the failure count.
 const recoveryResetPeriodSeconds = 24 * 60 * 60
 
-// setRecoveryActions makes SCM restart the service on failure, with
-// increasing delay between attempts. openLogger failing reports Stopped
-// with a nonzero exit code rather than crashing, so non-crash failures
-// must be opted into separately for that path to trigger a restart too.
+// setRecoveryActions makes SCM restart the service on failure with
+// increasing delays. Non-crash failures (a nonzero exit code, as when
+// openLogger fails) must be opted into separately.
 func setRecoveryActions(service *mgr.Service) error {
 	actions := []mgr.RecoveryAction{
 		{Type: mgr.ServiceRestart, Delay: 5 * time.Second},

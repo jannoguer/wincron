@@ -144,12 +144,10 @@ func TestRunJobAsUserEndToEnd(t *testing.T) {
 }
 
 func TestKillOnJobCloseTerminatesDetachedChild(t *testing.T) {
-	// `start /b` returns as soon as its child is launched, without waiting
-	// for it. The grandchild (ping+echo) inherits the output pipe, so
-	// cmd.Wait only returns once WaitDelay forces the pipe closed - well
-	// before the 30s ping finishes and writes the marker. It stays part of
-	// the job tree (no breakaway requested), so KILL_ON_JOB_CLOSE should
-	// terminate it once the run ends, and the marker should never appear.
+	// start /b detaches a grandchild that inherits the output pipe, so
+	// cmd.Wait returns once WaitDelay forces the pipe closed - long before
+	// the 30s ping would write the marker. KILL_ON_JOB_CLOSE must then
+	// terminate the grandchild, so the marker never appears.
 	dir := t.TempDir()
 	marker := filepath.Join(dir, "marker.txt")
 	cmd := fmt.Sprintf(`start /b cmd /c "ping -n 30 127.0.0.1 >nul & echo done > %s"`, marker)
@@ -161,8 +159,7 @@ func TestKillOnJobCloseTerminatesDetachedChild(t *testing.T) {
 	if !strings.Contains(got, "finish job L5:") {
 		t.Fatalf("log %q does not contain finish line", got)
 	}
-	// The detached child would need ~29s more to write the marker; a few
-	// seconds is enough to prove it was killed rather than still running.
+	// Long enough to prove the child was killed rather than still running.
 	time.Sleep(3 * time.Second)
 	if _, err := os.Stat(marker); err == nil {
 		t.Error("marker file exists: detached child survived the run")
