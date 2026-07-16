@@ -3,9 +3,11 @@ package cron
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log"
 	"os/exec"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -135,6 +137,42 @@ func TestRunJobAsUserEndToEnd(t *testing.T) {
 	}
 	if !strings.Contains(got, "exit 0") {
 		t.Errorf("log %q does not report success", got)
+	}
+}
+
+func TestResumeMainThreadStartsSuspendedProcess(t *testing.T) {
+	cmd := exec.Command("cmd", "/C", "exit 5")
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_SUSPENDED}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+
+	select {
+	case err := <-done:
+		t.Fatalf("suspended process exited before being resumed: %v", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	if err := resumeMainThread(cmd.Process.Pid); err != nil {
+		t.Fatalf("resumeMainThread: %v", err)
+	}
+
+	select {
+	case err := <-done:
+		var exitErr *exec.ExitError
+		if !errors.As(err, &exitErr) || exitErr.ExitCode() != 5 {
+			t.Errorf("Wait() = %v, want exit code 5", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("process did not exit after resume")
+	}
+}
+
+func TestResumeMainThreadNoSuchProcess(t *testing.T) {
+	if err := resumeMainThread(999999); err == nil {
+		t.Error("resumeMainThread(nonexistent pid) = nil, want error")
 	}
 }
 

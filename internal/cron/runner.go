@@ -2,11 +2,13 @@ package cron
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"os/exec"
 	"syscall"
 	"time"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
@@ -76,6 +78,10 @@ func runJob(ctx context.Context, job Job, logger *log.Logger) {
 			_ = windows.TerminateJobObject(killJob, 1)
 			return cmd.Process.Kill()
 		}
+		// Start suspended so the process cannot spawn children before it is
+		// assigned to the job object; a child spawned in that window would
+		// escape tree termination.
+		cmd.SysProcAttr.CreationFlags |= windows.CREATE_SUSPENDED
 	}
 
 	if job.User != "" {
@@ -89,6 +95,10 @@ func runJob(ctx context.Context, job Job, logger *log.Logger) {
 		if killJobErr == nil {
 			if aerr := assignToJobObject(killJob, cmd.Process.Pid); aerr != nil {
 				logger.Printf("job L%d: cannot track process tree: %v", job.Line, aerr)
+			}
+			if rerr := resumeMainThread(cmd.Process.Pid); rerr != nil {
+				logger.Printf("job L%d: cannot resume suspended process, killing: %v", job.Line, rerr)
+				_ = cmd.Process.Kill()
 			}
 		}
 		err = cmd.Wait()
@@ -115,4 +125,38 @@ func assignToJobObject(job windows.Handle, pid int) error {
 	}
 	defer windows.CloseHandle(proc)
 	return windows.AssignProcessToJobObject(job, proc)
+}
+
+// resumeMainThread resumes every thread owned by pid. Used to release a
+// process started with CREATE_SUSPENDED once it has been assigned to a job
+// object, so no window exists where it could spawn an untracked child.
+func resumeMainThread(pid int) error {
+	snapshot, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPTHREAD, 0)
+	if err != nil {
+		return err
+	}
+	defer windows.CloseHandle(snapshot)
+
+	var te windows.ThreadEntry32
+	te.Size = uint32(unsafe.Sizeof(te))
+	found := false
+	for terr := windows.Thread32First(snapshot, &te); terr == nil; terr = windows.Thread32Next(snapshot, &te) {
+		if te.OwnerProcessID != uint32(pid) {
+			continue
+		}
+		thread, oerr := windows.OpenThread(windows.THREAD_SUSPEND_RESUME, false, te.ThreadID)
+		if oerr != nil {
+			return oerr
+		}
+		_, rerr := windows.ResumeThread(thread)
+		windows.CloseHandle(thread)
+		if rerr != nil {
+			return rerr
+		}
+		found = true
+	}
+	if !found {
+		return fmt.Errorf("no threads found for pid %d", pid)
+	}
+	return nil
 }
