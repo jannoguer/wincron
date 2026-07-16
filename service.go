@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
+	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/svc"
 	"golang.org/x/sys/windows/svc/eventlog"
 	"golang.org/x/sys/windows/svc/mgr"
@@ -137,6 +139,9 @@ func installService(exePath string) error {
 	return service.Close()
 }
 
+// uninstallService stops the service before deleting it: DeleteService on a
+// running service only marks it for deletion, leaving it running and making a
+// reinstall fail with ERROR_SERVICE_MARKED_FOR_DELETE.
 func uninstallService() error {
 	m, err := connectManager()
 	if err != nil {
@@ -148,6 +153,9 @@ func uninstallService() error {
 		return err
 	}
 	defer func() { _ = service.Close() }()
+	if err := stopAndWait(service); err != nil && !errors.Is(err, windows.ERROR_SERVICE_NOT_ACTIVE) {
+		return err
+	}
 	if err := service.Delete(); err != nil {
 		return err
 	}
@@ -180,6 +188,13 @@ func stopService() error {
 		return err
 	}
 	defer func() { _ = service.Close() }()
+	return stopAndWait(service)
+}
+
+// stopAndWait sends a stop control and polls until the service reports
+// stopped. Stopping a service that is not running returns
+// ERROR_SERVICE_NOT_ACTIVE.
+func stopAndWait(service *mgr.Service) error {
 	state, err := service.Control(svc.Stop)
 	if err != nil {
 		return err
