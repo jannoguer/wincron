@@ -98,6 +98,30 @@ func registerEventSource() error {
 	return nil
 }
 
+// recoveryResetPeriodSeconds is how long the service must run without
+// failing before SCM resets the failure count back to the first recovery
+// action.
+const recoveryResetPeriodSeconds = 24 * 60 * 60
+
+// setRecoveryActions makes SCM restart the service on failure, with
+// increasing delay between attempts. openLogger failing reports Stopped
+// with a nonzero exit code rather than crashing, so non-crash failures
+// must be opted into separately for that path to trigger a restart too.
+func setRecoveryActions(service *mgr.Service) error {
+	actions := []mgr.RecoveryAction{
+		{Type: mgr.ServiceRestart, Delay: 5 * time.Second},
+		{Type: mgr.ServiceRestart, Delay: 30 * time.Second},
+		{Type: mgr.ServiceRestart, Delay: 60 * time.Second},
+	}
+	if err := service.SetRecoveryActions(actions, recoveryResetPeriodSeconds); err != nil {
+		return fmt.Errorf("setting recovery actions: %w", err)
+	}
+	if err := service.SetRecoveryActionsOnNonCrashFailures(true); err != nil {
+		return fmt.Errorf("enabling recovery for non-crash failures: %w", err)
+	}
+	return nil
+}
+
 func installService(exePath string) error {
 	m, err := connectManager()
 	if err != nil {
@@ -112,6 +136,10 @@ func installService(exePath string) error {
 		return err
 	}
 	if err := registerEventSource(); err != nil {
+		_ = service.Close()
+		return err
+	}
+	if err := setRecoveryActions(service); err != nil {
 		_ = service.Close()
 		return err
 	}
