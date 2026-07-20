@@ -46,9 +46,9 @@ Numeric 5-field cron expressions, named aliases in the month and day-of-week fie
 @reboot foo.exe
 ```
 
-Expressions work like classic cron: names work anywhere a number would, Sunday is `0` or `7`, and when both day fields are restricted the job runs when either matches. A step on a bare value runs to the end of the field (`5/3` = 5, 8, ..., 59).
+A step on a bare value runs to the end of the field (`5/3` = 5, 8, ..., 59).
 
-Nicknames: `@hourly`, `@daily`/`@midnight`, `@weekly`, `@monthly`, `@yearly`/`@annually`, and `@reboot`, which runs once each time the scheduler starts (boot, service restart, or foreground `run`) — not when the crontab is edited.
+`@reboot` runs once each time the scheduler starts (boot, service restart, or foreground `run`), not when the crontab is edited.
 
 ## The crontab file
 
@@ -56,20 +56,18 @@ Nicknames: `@hourly`, `@daily`/`@midnight`, `@weekly`, `@monthly`, `@yearly`/`@a
 
 `wincron.exe edit` opens it in `%EDITOR%` (Notepad if unset; a single executable with no arguments) and validates on save. For a service install this needs an elevated shell.
 
-Commands run with `cmd.exe /C`: pipes, redirection, `&&`, and batch files all work. Unlike classic cron, `%` is not special — `%VAR%` expands as usual. The working directory is the service's (`System32`), so use absolute paths; `user=` jobs run in the user's profile directory instead.
+Commands run with `cmd.exe /C`: pipes, redirection, `&&`, and batch files all work. Unlike classic cron, `%` is not special, so `%VAR%` expands as usual. The working directory is the service's (`System32`), so use absolute paths; `user=` jobs run in the user's profile directory instead.
 
-A job and everything it spawns are terminated as a group when it finishes, so `start /b foo.exe` leaves nothing behind — design jobs to run to completion, not to detach long-lived processes. On service stop, running jobs get 20 seconds to finish before being terminated.
+A job and everything it spawns are terminated as a group when it finishes, so `start /b foo.exe` leaves nothing behind; design jobs to run to completion, not to detach long-lived processes. On service stop, running jobs get 20 seconds to finish before being terminated.
 
 ## Environment variables
-
-`NAME=value` lines set variables for every job below them, on top of the service's environment:
 
 ```
 BACKUP_DIR=C:\backups
 0 5 * * 1 backup.exe %BACKUP_DIR%
 ```
 
-Names must match `[A-Za-z_][A-Za-z0-9_]*`; whitespace around the name and value is trimmed. Values are literal: quotes are kept (`NAME="x"` gives the job `"x"`, quotes included), and `%OTHER%` inside a value is not expanded — cmd.exe only expands `%...%` in command lines. `SHELL`, `HOME`, `MAILTO`, and `TZ` have no special meaning here: jobs always run under cmd.exe in local time, and output goes to the log, never to mail.
+Names must match `[A-Za-z_][A-Za-z0-9_]*`; whitespace around the name and value is trimmed. Values are literal: quotes are kept (`NAME="x"` gives the job `"x"`, quotes included), and `%OTHER%` inside a value is not expanded; cmd.exe only expands `%...%` in command lines. `SHELL`, `HOME`, `MAILTO`, and `TZ` have no special meaning here: jobs always run under cmd.exe in local time, and output goes to the log, never to mail.
 
 ## Running jobs as a user
 
@@ -78,7 +76,7 @@ Names must match `[A-Za-z_][A-Za-z0-9_]*`; whitespace around the name and value 
 > [!IMPORTANT]
 > The user must already be logged in when the job triggers, otherwise the run is skipped and logged. A disconnected session (fast user switching, a dropped remote session) counts as logged in; an active session is preferred.
 
-`user=` jobs require the scheduler itself to run as `SYSTEM` — the normal service install. A foreground `wincron.exe run` from a regular console skips them.
+`user=` jobs require the scheduler itself to run as `SYSTEM`, the normal service install. A foreground `wincron.exe run` from a regular console skips them.
 
 The first token after the schedule is a user field only when it starts with `user=` (case-insensitive); run a command whose first word starts with `user=` through `cmd /c`. A standalone `USER=name` line is an environment assignment, not a user field. `crontab.txt` remains the privilege boundary: jobs default to `SYSTEM`, so only administrators should be able to edit the file.
 
@@ -91,6 +89,6 @@ Job starts, captured output (up to 64 KB per run), and exit statuses are written
 
 ## Missed minutes and clock changes
 
-If the scheduler wakes up late (machine asleep, heavy load), each job due during the missed window is started once — not once per missed minute — and minutes missed more than 60 minutes ago are skipped entirely.
+If the scheduler wakes up late (machine asleep, heavy load), each job due during the missed window is started once (not once per missed minute), and minutes missed more than 60 minutes ago are skipped entirely.
 
 Schedules follow local wall-clock time: during daylight-saving changes, jobs inside a skipped hour do not run that day, and jobs inside a repeated hour run twice.
