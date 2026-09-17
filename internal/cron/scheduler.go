@@ -2,6 +2,7 @@ package cron
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"sync"
@@ -16,6 +17,7 @@ type Scheduler struct {
 	crontabPath string
 	jobs        []Job
 	mtime       time.Time
+	lastProblem string
 	logger      *log.Logger
 	wg          sync.WaitGroup
 }
@@ -121,23 +123,36 @@ func (s *Scheduler) reloadIfChanged() {
 	info, err := os.Stat(s.crontabPath)
 	if err != nil {
 		if !s.mtime.IsZero() {
-			s.logger.Printf("crontab stat failed, keeping %d jobs: %v", len(s.jobs), err)
+			s.logProblem("crontab stat failed, keeping %d jobs: %v", len(s.jobs), err)
 		} else {
-			s.logger.Printf("crontab unavailable, running with no jobs: %v", err)
+			s.logProblem("crontab unavailable, running with no jobs: %v", err)
 		}
 		return
 	}
 	if info.ModTime().Equal(s.mtime) {
+		s.lastProblem = ""
 		return
 	}
 	jobs, err := LoadFile(s.crontabPath)
 	if err != nil {
-		s.logger.Printf("crontab reload failed, keeping %d jobs: %v", len(s.jobs), err)
+		s.logProblem("crontab reload failed, keeping %d jobs: %v", len(s.jobs), err)
 		return
 	}
 	s.jobs = jobs
-	if !s.mtime.IsZero() {
+	if !s.mtime.IsZero() || s.lastProblem != "" {
 		s.logger.Printf("crontab reloaded, %d jobs", len(jobs))
 	}
+	s.lastProblem = ""
 	s.mtime = info.ModTime()
+}
+
+// logProblem drops a message identical to the previous problem, which the
+// once-a-minute reload would otherwise repeat for as long as it lasts.
+func (s *Scheduler) logProblem(format string, args ...any) {
+	msg := fmt.Sprintf(format, args...)
+	if msg == s.lastProblem {
+		return
+	}
+	s.lastProblem = msg
+	s.logger.Print(msg)
 }

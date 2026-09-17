@@ -199,3 +199,57 @@ func TestRunExecutesRebootJob(t *testing.T) {
 		t.Errorf("log %q does not contain reboot job output", buf.String())
 	}
 }
+
+func TestReloadLogsRepeatedProblemOnce(t *testing.T) {
+	s, buf := testScheduler(t, "* * * * * one.exe\n")
+	if err := os.Remove(s.crontabPath); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 5; i++ {
+		s.reloadIfChanged()
+	}
+	if got := strings.Count(buf.String(), "stat failed"); got != 1 {
+		t.Errorf("logged %d stat failures over 5 reloads, want 1", got)
+	}
+}
+
+func TestReloadLogsProblemAgainWhenItChanges(t *testing.T) {
+	s, buf := testScheduler(t, "* * * * * one.exe\n")
+	base := time.Now()
+	rewrite := func(content string, mtime time.Time) {
+		t.Helper()
+		if err := os.WriteFile(s.crontabPath, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(s.crontabPath, mtime, mtime); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	rewrite("not a valid line\n", base.Add(time.Hour))
+	s.reloadIfChanged()
+	s.reloadIfChanged()
+	if got := strings.Count(buf.String(), "reload failed"); got != 1 {
+		t.Fatalf("logged %d reload failures for one broken file, want 1", got)
+	}
+
+	rewrite("99 * * * * foo.exe\n", base.Add(2*time.Hour))
+	s.reloadIfChanged()
+	if got := strings.Count(buf.String(), "reload failed"); got != 2 {
+		t.Errorf("logged %d reload failures after a different error, want 2", got)
+	}
+
+	rewrite("* * * * * two.exe\n", base.Add(3*time.Hour))
+	s.reloadIfChanged()
+	if !strings.Contains(buf.String(), "crontab reloaded, 1 jobs") {
+		t.Errorf("log %q does not report recovery", buf.String())
+	}
+
+	if err := os.Remove(s.crontabPath); err != nil {
+		t.Fatal(err)
+	}
+	s.reloadIfChanged()
+	if !strings.Contains(buf.String(), "stat failed") {
+		t.Errorf("log %q does not report the new problem after recovery", buf.String())
+	}
+}
