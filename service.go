@@ -54,12 +54,13 @@ func (s *cronService) Execute(args []string, requests <-chan svc.ChangeRequest, 
 		close(done)
 	}()
 
-	status <- svc.Status{State: svc.Running, Accepts: svc.AcceptStop | svc.AcceptShutdown}
+	status <- svc.Status{State: svc.Running, Accepts: svc.AcceptStop | svc.AcceptShutdown | svc.AcceptPreShutdown}
 	for req := range requests {
 		switch req.Cmd {
 		case svc.Interrogate:
 			status <- req.CurrentStatus
-		case svc.Stop, svc.Shutdown:
+		// PreShutdown replaces Shutdown once accepted, and allows minutes.
+		case svc.Stop, svc.Shutdown, svc.PreShutdown:
 			status <- svc.Status{State: svc.StopPending, WaitHint: startStopWaitHintMillis}
 			cancel()
 			<-done
