@@ -50,8 +50,11 @@ jobs:
             zip "wincron-${version}-windows-${arch}.zip" wincron.exe install.bat README.md LICENSE.md
             rm wincron.exe
           done
+          sha256sum wincron-*-windows-*.zip > SHA256SUMS
 
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          files: wincron-*-windows-*.zip
+          files: |
+            wincron-*-windows-*.zip
+            SHA256SUMS
