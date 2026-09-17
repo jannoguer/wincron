@@ -1,4 +1,4 @@
-# wincron - Windows crontab clone in Go.
+# wincron - cron for Windows
 
 > [!CAUTION]
 > By default, `wincron` runs jobs as the highly privileged `NT AUTHORITY\SYSTEM` account, which grants full administrative control but lacks a standard user profile or `PATH`. Proceed with care, and consider using the `user=NAME` parameter to run jobs with reduced, per-user privileges ([see below](#running-jobs-as-a-user)).
