@@ -40,6 +40,9 @@ func main() {
 	exeDir := filepath.Dir(exePath)
 	crontabPath := filepath.Join(exeDir, "crontab.txt")
 	logPath := filepath.Join(exeDir, "wincron.log")
+	if p := os.Getenv("WINCRON_LOG"); p != "" {
+		logPath = p
+	}
 
 	isService, err := svc.IsWindowsService()
 	if err != nil {
