@@ -20,10 +20,12 @@ type Scheduler struct {
 	lastProblem string
 	logger      *log.Logger
 	wg          sync.WaitGroup
+	mu          sync.Mutex
+	running     map[int]bool
 }
 
 func NewScheduler(crontabPath string, logger *log.Logger) *Scheduler {
-	s := &Scheduler{crontabPath: crontabPath, logger: logger}
+	s := &Scheduler{crontabPath: crontabPath, logger: logger, running: make(map[int]bool)}
 	s.reloadIfChanged()
 	return s
 }
@@ -96,11 +98,35 @@ func (s *Scheduler) runRebootJobs(jobCtx context.Context) {
 }
 
 func (s *Scheduler) launch(jobCtx context.Context, job Job) {
+	if job.NoOverlap && !s.claim(job.Line) {
+		s.logger.Printf("skip job L%d: an earlier run is still going", job.Line)
+		return
+	}
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
+		if job.NoOverlap {
+			defer s.release(job.Line)
+		}
 		runJob(jobCtx, job, s.logger)
 	}()
+}
+
+// claim marks a job as running and reports whether it was free to start.
+func (s *Scheduler) claim(line int) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.running[line] {
+		return false
+	}
+	s.running[line] = true
+	return true
+}
+
+func (s *Scheduler) release(line int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.running, line)
 }
 
 func (s *Scheduler) shutdown(cancelJobs context.CancelFunc) {

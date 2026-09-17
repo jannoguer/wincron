@@ -2,6 +2,7 @@ package cron
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -39,6 +40,11 @@ func (b *cappedBuffer) Write(p []byte) (int, error) {
 }
 
 func runJob(ctx context.Context, job Job, logger *log.Logger) {
+	if job.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, job.Timeout)
+		defer cancel()
+	}
 	shell := os.Getenv("ComSpec")
 	if shell == "" {
 		shell = "cmd"
@@ -116,6 +122,10 @@ func runJob(ctx context.Context, job Job, logger *log.Logger) {
 		}
 	}
 	if err != nil {
+		if job.Timeout > 0 && errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			logger.Printf("finish job L%d: timed out after %s", job.Line, job.Timeout)
+			return
+		}
 		logger.Printf("finish job L%d: %v (%s)", job.Line, err, duration)
 		return
 	}

@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func writeCrontab(t *testing.T, content string) string {
@@ -188,6 +189,61 @@ func TestLoadFileUserField(t *testing.T) {
 	}
 }
 
+func TestLoadFileJobOptions(t *testing.T) {
+	tests := []struct {
+		name, content, wantUser, wantCommand string
+		wantTimeout                          time.Duration
+		wantNoOverlap                        bool
+	}{
+		{name: "timeout", content: "* * * * * timeout=30s slow.exe\n", wantCommand: "slow.exe", wantTimeout: 30 * time.Second},
+		{name: "compound duration", content: "* * * * * timeout=1h30m slow.exe\n", wantCommand: "slow.exe", wantTimeout: 90 * time.Minute},
+		{name: "no overlap", content: "* * * * * overlap=no slow.exe\n", wantCommand: "slow.exe", wantNoOverlap: true},
+		{name: "overlap allowed", content: "* * * * * overlap=yes slow.exe\n", wantCommand: "slow.exe"},
+		{name: "uppercase keys", content: "* * * * * TIMEOUT=5s OVERLAP=NO slow.exe\n", wantCommand: "slow.exe", wantTimeout: 5 * time.Second, wantNoOverlap: true},
+		{
+			name:        "all options",
+			content:     "* * * * * user=jan timeout=5m overlap=no backup.exe --full\n",
+			wantUser:    "jan",
+			wantCommand: "backup.exe --full",
+			wantTimeout: 5 * time.Minute, wantNoOverlap: true,
+		},
+		{
+			name:        "order does not matter",
+			content:     "* * * * * overlap=no timeout=5m user=jan backup.exe\n",
+			wantUser:    "jan",
+			wantCommand: "backup.exe",
+			wantTimeout: 5 * time.Minute, wantNoOverlap: true,
+		},
+		{name: "reboot job", content: "@reboot timeout=10s agent.exe\n", wantCommand: "agent.exe", wantTimeout: 10 * time.Second},
+		{name: "nickname", content: "@daily overlap=no backup.exe\n", wantCommand: "backup.exe", wantNoOverlap: true},
+		{name: "option-like command", content: "* * * * * echo timeout=30s\n", wantCommand: "echo timeout=30s"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			jobs, err := LoadFile(writeCrontab(t, tt.content))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(jobs) != 1 {
+				t.Fatalf("got %d jobs, want 1", len(jobs))
+			}
+			job := jobs[0]
+			if job.Command != tt.wantCommand {
+				t.Errorf("Command = %q, want %q", job.Command, tt.wantCommand)
+			}
+			if job.User != tt.wantUser {
+				t.Errorf("User = %q, want %q", job.User, tt.wantUser)
+			}
+			if job.Timeout != tt.wantTimeout {
+				t.Errorf("Timeout = %s, want %s", job.Timeout, tt.wantTimeout)
+			}
+			if job.NoOverlap != tt.wantNoOverlap {
+				t.Errorf("NoOverlap = %t, want %t", job.NoOverlap, tt.wantNoOverlap)
+			}
+		})
+	}
+}
+
 func TestLoadFileErrors(t *testing.T) {
 	tests := []struct {
 		name, content, wantErr string
@@ -207,6 +263,15 @@ func TestLoadFileErrors(t *testing.T) {
 		{"empty quoted user", `* * * * * user="" foo.exe` + "\n", "user= requires a name"},
 		{"empty single-quoted user", "* * * * * user='' foo.exe\n", "user= requires a name"},
 		{"text after quoted user", `* * * * * user="jan"foo.exe` + "\n", "unexpected text after quoted user="},
+		{"timeout without unit", "* * * * * timeout=30 foo.exe\n", "timeout= requires a positive duration"},
+		{"timeout not a duration", "* * * * * timeout=soon foo.exe\n", "timeout= requires a positive duration"},
+		{"zero timeout", "* * * * * timeout=0s foo.exe\n", "timeout= requires a positive duration"},
+		{"negative timeout", "* * * * * timeout=-5s foo.exe\n", "timeout= requires a positive duration"},
+		{"empty timeout", "* * * * * timeout= foo.exe\n", "timeout= requires a value"},
+		{"bad overlap", "* * * * * overlap=maybe foo.exe\n", "overlap= requires yes or no"},
+		{"duplicate option", "* * * * * timeout=5s timeout=6s foo.exe\n", "timeout= given twice"},
+		{"options without command", "* * * * * timeout=5s\n", "expected a command after the job options"},
+		{"overlap without command", "* * * * * overlap=no\n", "expected a command after the job options"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

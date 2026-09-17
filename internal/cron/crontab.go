@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 )
@@ -24,12 +25,14 @@ var scheduleNicknames = map[string]string{
 }
 
 type Job struct {
-	Schedule Schedule
-	Command  string
-	Line     int
-	Reboot   bool
-	Envs     []string
-	User     string
+	Schedule  Schedule
+	Command   string
+	Line      int
+	Reboot    bool
+	Envs      []string
+	User      string
+	Timeout   time.Duration
+	NoOverlap bool
 }
 
 func LoadFile(path string) ([]Job, error) {
@@ -57,14 +60,16 @@ func LoadFile(path string) ([]Job, error) {
 		if strings.HasPrefix(fields[0], "@") {
 			nickname := strings.ToLower(fields[0])
 			if nickname == "@reboot" {
-				user, command, err := jobTail(line, 1, lineNo)
+				opts, command, err := jobTail(line, 1, lineNo)
 				if err != nil {
 					return nil, err
 				}
 				if command == "" {
 					return nil, fmt.Errorf("line %d: @reboot requires a command", lineNo)
 				}
-				jobs = append(jobs, Job{Reboot: true, User: user, Command: command, Line: lineNo, Envs: snapshot(envs)})
+				job := opts.job(command, lineNo, envs)
+				job.Reboot = true
+				jobs = append(jobs, job)
 				continue
 			}
 			scheduleSpec, ok := scheduleNicknames[nickname]
@@ -101,73 +106,159 @@ func LoadFile(path string) ([]Job, error) {
 	return jobs, nil
 }
 
-// buildScheduledJob parses the optional user= field and command after the
+// buildScheduledJob parses the optional job options and command after the
 // first skipFields fields; label names the schedule token in the no-command
 // error.
 func buildScheduledJob(line string, lineNo int, schedule Schedule, skipFields int, label string, envs []string) (Job, error) {
-	user, command, err := jobTail(line, skipFields, lineNo)
+	opts, command, err := jobTail(line, skipFields, lineNo)
 	if err != nil {
 		return Job{}, err
 	}
 	if command == "" {
-		if user != "" {
-			return Job{}, fmt.Errorf("line %d: expected a command after user=%s", lineNo, user)
+		switch {
+		case opts.User != "":
+			return Job{}, fmt.Errorf("line %d: expected a command after user=%s", lineNo, opts.User)
+		case opts.Timeout > 0 || opts.NoOverlap:
+			return Job{}, fmt.Errorf("line %d: expected a command after the job options", lineNo)
+		default:
+			return Job{}, fmt.Errorf("line %d: %s requires a command", lineNo, label)
 		}
-		return Job{}, fmt.Errorf("line %d: %s requires a command", lineNo, label)
 	}
-	return Job{Schedule: schedule, User: user, Command: command, Line: lineNo, Envs: snapshot(envs)}, nil
+	job := opts.job(command, lineNo, envs)
+	job.Schedule = schedule
+	return job, nil
 }
 
-// jobTail parses the optional user= field and the command after the first
-// n fields. command is empty when nothing follows.
-func jobTail(line string, fields, lineNo int) (user, command string, err error) {
-	user, cmdOff, err := parseUserField(line, skipFields(line, fields), lineNo)
+// jobOptions holds the key=value tokens accepted between the schedule and
+// the command.
+type jobOptions struct {
+	User      string
+	Timeout   time.Duration
+	NoOverlap bool
+}
+
+var optionKeys = []string{"user=", "timeout=", "overlap="}
+
+func (o jobOptions) job(command string, lineNo int, envs []string) Job {
+	return Job{
+		Command:   command,
+		Line:      lineNo,
+		Envs:      snapshot(envs),
+		User:      o.User,
+		Timeout:   o.Timeout,
+		NoOverlap: o.NoOverlap,
+	}
+}
+
+func (o *jobOptions) set(key, value string, lineNo int) error {
+	switch key {
+	case "user=":
+		o.User = value
+	case "timeout=":
+		d, err := time.ParseDuration(value)
+		if err != nil || d <= 0 {
+			return fmt.Errorf("line %d: timeout= requires a positive duration such as 30s or 5m", lineNo)
+		}
+		o.Timeout = d
+	case "overlap=":
+		switch strings.ToLower(value) {
+		case "yes":
+			o.NoOverlap = false
+		case "no":
+			o.NoOverlap = true
+		default:
+			return fmt.Errorf("line %d: overlap= requires yes or no", lineNo)
+		}
+	}
+	return nil
+}
+
+// jobTail parses the optional key=value options and the command after the
+// first n fields. command is empty when nothing follows.
+func jobTail(line string, fields, lineNo int) (jobOptions, string, error) {
+	opts, cmdOff, err := parseOptions(line, skipFields(line, fields), lineNo)
 	if err != nil {
-		return "", "", err
+		return jobOptions{}, "", err
 	}
-	return user, line[cmdOff:], nil
+	return opts, line[cmdOff:], nil
 }
 
-// parseUserField extracts an optional user=NAME token at pos.
-func parseUserField(line string, pos, lineNo int) (user string, cmdOff int, err error) {
-	if pos >= len(line) {
-		return "", pos, nil
+// parseOptions reads the leading key=value tokens at pos and returns the
+// offset where the command starts.
+func parseOptions(line string, pos, lineNo int) (jobOptions, int, error) {
+	var opts jobOptions
+	seen := make(map[string]bool, len(optionKeys))
+	for pos < len(line) {
+		key, ok := matchOptionKey(line[pos:])
+		if !ok {
+			break
+		}
+		if seen[key] {
+			return jobOptions{}, 0, fmt.Errorf("line %d: %s given twice", lineNo, key)
+		}
+		seen[key] = true
+		value, next, err := parseOptionValue(line, pos, key, lineNo)
+		if err != nil {
+			return jobOptions{}, 0, err
+		}
+		if err := opts.set(key, value, lineNo); err != nil {
+			return jobOptions{}, 0, err
+		}
+		pos = next
 	}
-	rest, ok := cutFold(line[pos:], "user=")
-	if !ok {
-		return "", pos, nil
+	return opts, pos, nil
+}
+
+func matchOptionKey(s string) (string, bool) {
+	for _, key := range optionKeys {
+		if _, ok := cutFold(s, key); ok {
+			return key, true
+		}
 	}
-	valueStart := pos + len("user=")
+	return "", false
+}
+
+// parseOptionValue reads the value of the key= token at pos, quoted or not,
+// and returns the offset of whatever follows it.
+func parseOptionValue(line string, pos int, key string, lineNo int) (string, int, error) {
+	valueStart := pos + len(key)
+	rest := line[valueStart:]
 	if rest == "" {
-		return "", pos, fmt.Errorf("line %d: user= requires a name", lineNo)
+		return "", 0, missingValue(key, lineNo)
 	}
 	if rest[0] == '"' || rest[0] == '\'' {
 		quote := rest[0]
 		closeIdx := strings.IndexByte(rest[1:], quote)
 		if closeIdx < 0 {
-			return "", pos, fmt.Errorf("line %d: unterminated %c in user= value", lineNo, quote)
+			return "", 0, fmt.Errorf("line %d: unterminated %c in %s value", lineNo, quote, key)
 		}
-		user = rest[1 : 1+closeIdx]
-		if user == "" {
-			return "", pos, fmt.Errorf("line %d: user= requires a name", lineNo)
+		value := rest[1 : 1+closeIdx]
+		if value == "" {
+			return "", 0, missingValue(key, lineNo)
 		}
 		afterQuote := valueStart + 1 + closeIdx + 1
 		if afterQuote < len(line) {
 			if r, _ := utf8.DecodeRuneInString(line[afterQuote:]); !unicode.IsSpace(r) {
-				return "", pos, fmt.Errorf("line %d: unexpected text after quoted user= value", lineNo)
+				return "", 0, fmt.Errorf("line %d: unexpected text after quoted %s value", lineNo, key)
 			}
 		}
-		return user, skipSpace(line, afterQuote), nil
+		return value, skipSpace(line, afterQuote), nil
 	}
 	end := strings.IndexFunc(rest, unicode.IsSpace)
 	if end < 0 {
 		return rest, len(line), nil
 	}
-	user = rest[:end]
-	if user == "" {
-		return "", pos, fmt.Errorf("line %d: user= requires a name", lineNo)
+	if end == 0 {
+		return "", 0, missingValue(key, lineNo)
 	}
-	return user, skipSpace(line, valueStart+end), nil
+	return rest[:end], skipSpace(line, valueStart+end), nil
+}
+
+func missingValue(key string, lineNo int) error {
+	if key == "user=" {
+		return fmt.Errorf("line %d: user= requires a name", lineNo)
+	}
+	return fmt.Errorf("line %d: %s requires a value", lineNo, key)
 }
 
 func cutFold(s, prefix string) (string, bool) {

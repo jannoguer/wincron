@@ -233,6 +233,33 @@ func TestJobObjectTerminatesProcess(t *testing.T) {
 	}
 }
 
+func TestRunJobTimeoutTerminatesJob(t *testing.T) {
+	job := Job{Command: "ping -n 30 127.0.0.1", Line: 4, Timeout: time.Second}
+	done := make(chan string, 1)
+	go func() { done <- runTestJob(t, context.Background(), job) }()
+
+	var got string
+	select {
+	case got = <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("job outlived its timeout")
+	}
+	if !strings.Contains(got, "finish job L4: timed out after 1s") {
+		t.Errorf("log %q does not report the timeout", got)
+	}
+}
+
+func TestRunJobFinishesInsideTimeout(t *testing.T) {
+	job := Job{Command: "echo quick", Line: 5, Timeout: time.Minute}
+	got := runTestJob(t, context.Background(), job)
+	if !strings.Contains(got, "finish job L5: exit 0") {
+		t.Errorf("log %q does not report a successful run", got)
+	}
+	if strings.Contains(got, "timed out") {
+		t.Errorf("log %q reports a timeout for a quick job", got)
+	}
+}
+
 func TestRunJobQuotedPathWithQuotedArgument(t *testing.T) {
 	// cmd strips the first and last quote of a /C command line, so a quoted
 	// program path followed by a quoted argument only survives with /S.

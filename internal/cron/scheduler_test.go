@@ -200,6 +200,46 @@ func TestRunExecutesRebootJob(t *testing.T) {
 	}
 }
 
+func TestLaunchSkipsOverlappingRun(t *testing.T) {
+	s, buf := testScheduler(t, "* * * * * overlap=no ping -n 30 127.0.0.1\n")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// claim happens in launch itself, so the second call sees the first run
+	// even before its goroutine reaches runJob.
+	s.launch(ctx, s.jobs[0])
+	s.launch(ctx, s.jobs[0])
+	cancel()
+	s.wg.Wait()
+
+	if got := strings.Count(buf.String(), "start job L1"); got != 1 {
+		t.Errorf("started the job %d times, want 1", got)
+	}
+	if !strings.Contains(buf.String(), "skip job L1: an earlier run is still going") {
+		t.Errorf("log %q does not report the skipped run", buf.String())
+	}
+	if !s.claim(1) {
+		t.Error("job stayed marked as running after it finished")
+	}
+}
+
+func TestLaunchAllowsOverlapByDefault(t *testing.T) {
+	s, buf := testScheduler(t, "* * * * * ping -n 30 127.0.0.1\n")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	s.launch(ctx, s.jobs[0])
+	s.launch(ctx, s.jobs[0])
+	cancel()
+	s.wg.Wait()
+	if got := strings.Count(buf.String(), "start job L1"); got != 2 {
+		t.Errorf("started the job %d times, want 2", got)
+	}
+	if strings.Contains(buf.String(), "skip job") {
+		t.Errorf("log %q skipped a run without overlap=no", buf.String())
+	}
+}
+
 func TestReloadLogsRepeatedProblemOnce(t *testing.T) {
 	s, buf := testScheduler(t, "* * * * * one.exe\n")
 	if err := os.Remove(s.crontabPath); err != nil {

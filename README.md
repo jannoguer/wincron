@@ -78,10 +78,18 @@ Names must match `[A-Za-z_][A-Za-z0-9_]*`; whitespace around the name and value 
 
 `user=` jobs require the scheduler itself to run as `SYSTEM`, the normal service install. A foreground `wincron.exe run` from a regular console skips them.
 
-The first token after the schedule is a user field only when it starts with `user=` (case-insensitive); run a command whose first word starts with `user=` through `cmd /c`. A standalone `USER=name` line is an environment assignment, not a user field. `crontab.txt` remains the privilege boundary: jobs default to `SYSTEM`, so only administrators should be able to edit the file.
+The tokens after the schedule are job options only while they start with `user=`, `timeout=`, or `overlap=` (case-insensitive); run a command whose first word starts with one of those through `cmd /c`. A standalone `USER=name` line is an environment assignment, not a user field. `crontab.txt` remains the privilege boundary: jobs default to `SYSTEM`, so only administrators should be able to edit the file.
 
 > [!TIP]
 > `Get-LocalUser` lists the accounts on the machine.
+
+## Timeouts and overlapping runs
+
+```
+0 * * * * timeout=5m overlap=no slow.exe
+```
+
+`timeout=` terminates the job and everything it spawned once the duration passes; the value needs a unit (`30s`, `5m`, `1h30m`). `overlap=no` skips a start while the previous run of the same line is still going. Both sit with `user=` between the schedule and the command, in any order. Without them a job runs unbounded and concurrent copies are allowed.
 
 ## Logging
 
