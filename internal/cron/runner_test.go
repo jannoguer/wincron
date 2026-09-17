@@ -232,3 +232,20 @@ func TestJobObjectTerminatesProcess(t *testing.T) {
 		t.Fatal("process still running after TerminateJobObject")
 	}
 }
+
+func TestRunJobQuotedPathWithQuotedArgument(t *testing.T) {
+	// cmd strips the first and last quote of a /C command line, so a quoted
+	// program path followed by a quoted argument only survives with /S.
+	script := filepath.Join(t.TempDir(), "my script.bat")
+	if err := os.WriteFile(script, []byte("@echo off\r\necho arg=%~1\r\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	job := Job{Command: `"` + script + `" "hello world"`, Line: 1}
+	got := runTestJob(t, context.Background(), job)
+	if !strings.Contains(got, "arg=hello world") {
+		t.Errorf("log %q does not contain the script output", got)
+	}
+	if !strings.Contains(got, "finish job L1: exit 0") {
+		t.Errorf("log %q does not report a successful run", got)
+	}
+}

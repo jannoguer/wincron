@@ -44,7 +44,9 @@ func runJob(ctx context.Context, job Job, logger *log.Logger) {
 		shell = "cmd"
 	}
 	cmd := exec.CommandContext(ctx, shell)
-	cmd.SysProcAttr = &syscall.SysProcAttr{CmdLine: "/C " + job.Command}
+	// /S makes cmd strip just the outer quotes, leaving a command that
+	// starts with a quoted path intact.
+	cmd.SysProcAttr = &syscall.SysProcAttr{CmdLine: `/S /C "` + job.Command + `"`}
 	cmd.WaitDelay = pipeWaitDelay
 	if job.User != "" {
 		token, env, err := userContext(job.User)
