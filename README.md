@@ -89,7 +89,7 @@ The tokens after the schedule are job options only while they start with `user=`
 0 * * * * timeout=5m overlap=no slow.exe
 ```
 
-`timeout=` terminates the job and everything it spawned once the duration passes; the value needs a unit (`30s`, `5m`, `1h30m`). `overlap=no` skips a start while the previous run of the same line is still going. Both sit with `user=` between the schedule and the command, in any order. Without them a job runs unbounded and concurrent copies are allowed.
+`timeout=` terminates the job and everything it spawned once the duration passes; the value needs a unit (`30s`, `5m`, `1h30m`). `overlap=no` skips a start while the previous run of the same job is still going; a job is identified by its line's text, so edits that only move it keep the tracking. Both sit with `user=` between the schedule and the command, in any order. Without them a job runs unbounded and concurrent copies are allowed.
 
 ## Logging
 

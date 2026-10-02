@@ -33,6 +33,9 @@ type Job struct {
 	User      string
 	Timeout   time.Duration
 	NoOverlap bool
+	// key is the line text plus its occurrence count, stable when an edit
+	// shifts line numbers.
+	key string
 }
 
 func LoadFile(path string) ([]Job, error) {
@@ -44,6 +47,12 @@ func LoadFile(path string) ([]Job, error) {
 
 	var jobs []Job
 	var envs []string
+	occurrences := make(map[string]int)
+	add := func(job Job, line string) {
+		job.key = fmt.Sprintf("%d:%s", occurrences[line], line)
+		occurrences[line]++
+		jobs = append(jobs, job)
+	}
 	scanner := bufio.NewScanner(f)
 	lineNo := 0
 	for scanner.Scan() {
@@ -69,7 +78,7 @@ func LoadFile(path string) ([]Job, error) {
 				}
 				job := opts.job(command, lineNo, envs)
 				job.Reboot = true
-				jobs = append(jobs, job)
+				add(job, line)
 				continue
 			}
 			scheduleSpec, ok := scheduleNicknames[nickname]
@@ -84,7 +93,7 @@ func LoadFile(path string) ([]Job, error) {
 			if err != nil {
 				return nil, err
 			}
-			jobs = append(jobs, job)
+			add(job, line)
 			continue
 		}
 		if len(fields) < scheduleFieldCount+1 {
@@ -98,7 +107,7 @@ func LoadFile(path string) ([]Job, error) {
 		if err != nil {
 			return nil, err
 		}
-		jobs = append(jobs, job)
+		add(job, line)
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, err

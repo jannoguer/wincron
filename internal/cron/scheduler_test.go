@@ -218,8 +218,60 @@ func TestLaunchSkipsOverlappingRun(t *testing.T) {
 	if !strings.Contains(buf.String(), "skip job L1: an earlier run is still going") {
 		t.Errorf("log %q does not report the skipped run", buf.String())
 	}
-	if !s.claim(1) {
+	if !s.claim(s.jobs[0].key) {
 		t.Error("job stayed marked as running after it finished")
+	}
+}
+
+func TestOverlapSurvivesLineShift(t *testing.T) {
+	s, buf := testScheduler(t, "* * * * * overlap=no ping -n 30 127.0.0.1\n")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	s.launch(ctx, s.jobs[0])
+	// An edit above the running job moves it from line 1 to line 2 and puts
+	// an unrelated overlap=no job on line 1.
+	if err := os.WriteFile(s.crontabPath, []byte("* * * * * overlap=no echo other\n* * * * * overlap=no ping -n 30 127.0.0.1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	mtime := time.Now().Add(time.Hour)
+	if err := os.Chtimes(s.crontabPath, mtime, mtime); err != nil {
+		t.Fatal(err)
+	}
+	s.reloadIfChanged()
+	if len(s.jobs) != 2 {
+		t.Fatalf("got %d jobs after reload, want 2", len(s.jobs))
+	}
+	for _, job := range s.jobs {
+		s.launch(ctx, job)
+	}
+	cancel()
+	s.wg.Wait()
+
+	log := buf.String()
+	if !strings.Contains(log, "start job L1: echo other") {
+		t.Errorf("log %q: the unrelated job now on line 1 did not start", log)
+	}
+	if !strings.Contains(log, "skip job L2: an earlier run is still going") {
+		t.Errorf("log %q: the moved job was not recognized as still running", log)
+	}
+	if got := strings.Count(log, "ping -n 30"); got != 1 {
+		t.Errorf("started the moved job %d times, want 1", got)
+	}
+}
+
+func TestOverlapTracksIdenticalLinesSeparately(t *testing.T) {
+	line := "* * * * * overlap=no ping -n 30 127.0.0.1\n"
+	s, buf := testScheduler(t, line+line)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	s.launch(ctx, s.jobs[0])
+	s.launch(ctx, s.jobs[1])
+	cancel()
+	s.wg.Wait()
+	if strings.Contains(buf.String(), "skip job") {
+		t.Errorf("log %q: a duplicate line was treated as the same job", buf.String())
 	}
 }
 
