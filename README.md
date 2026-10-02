@@ -48,6 +48,8 @@ Numeric 5-field cron expressions, named aliases in the month and day-of-week fie
 
 A step on a bare value runs to the end of the field (`5/3` = 5, 8, ..., 59).
 
+When both day-of-month and day-of-week are restricted, a day matching either one runs the job (`0 0 13 * 5` = every 13th and every Friday). As in standard cron, a field starting with `*`, such as `*/2`, counts as unrestricted, so `0 0 */2 * 1` runs only on Mondays that fall on odd days.
+
 `@reboot` runs once each time the scheduler starts (boot, service restart, or foreground `run`), not when the crontab is edited.
 
 ## The crontab file

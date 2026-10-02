@@ -187,6 +187,8 @@ func TestParseScheduleRestrictedFlags(t *testing.T) {
 		{"1", "*", true, false},
 		{"*", "1", false, true},
 		{"1", "1", true, true},
+		{"*/2", "1", false, true},
+		{"1", "*/2", true, false},
 	}
 	for _, tt := range tests {
 		s, err := ParseSchedule([]string{"*", "*", tt.dom, "*", tt.dow})
@@ -266,6 +268,11 @@ func TestMatches(t *testing.T) {
 		{"0 0 13 * 5", at(2026, time.April, 13, 0, 0), true}, // Monday the 13th
 		{"0 0 13 * 5", at(2026, time.July, 10, 0, 0), true},  // Friday the 10th
 		{"0 0 13 * 5", at(2026, time.July, 6, 0, 0), false},  // Monday the 6th
+
+		// A "*/N" day field is unrestricted, so the day fields are ANDed.
+		{"0 0 */2 * 1", at(2026, time.July, 13, 0, 0), true}, // Monday the 13th
+		{"0 0 */2 * 1", at(2026, time.July, 7, 0, 0), false}, // Tuesday the 7th
+		{"0 0 */2 * 1", at(2026, time.July, 6, 0, 0), false}, // Monday the 6th
 
 		// Lists and steps combined.
 		{"0,30 12 * * *", at(2026, time.July, 6, 12, 30), true},

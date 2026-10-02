@@ -46,8 +46,10 @@ func ParseSchedule(fields []string) (Schedule, error) {
 	if s.dayOfWeek&(1<<7) != 0 {
 		s.dayOfWeek = (s.dayOfWeek &^ (1 << 7)) | 1
 	}
-	s.dayOfMonthRestricted = fields[2] != "*"
-	s.dayOfWeekRestricted = fields[4] != "*"
+	// Like Vixie cron, any field starting with "*" (such as */2) counts as
+	// unrestricted, so the two day fields are ANDed rather than ORed.
+	s.dayOfMonthRestricted = !strings.HasPrefix(fields[2], "*")
+	s.dayOfWeekRestricted = !strings.HasPrefix(fields[4], "*")
 	return s, nil
 }
 
