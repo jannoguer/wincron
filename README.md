@@ -99,4 +99,4 @@ Job starts, captured output (up to 64 KB per run), and exit statuses are written
 
 If the scheduler wakes up late (machine asleep, heavy load), each job due during the missed window is started once (not once per missed minute), and minutes missed more than 60 minutes ago are skipped entirely.
 
-Schedules follow local wall-clock time: during daylight-saving changes, jobs inside a skipped hour do not run that day, and jobs inside a repeated hour run twice.
+Schedules follow local wall-clock time: during daylight-saving changes, jobs inside a skipped hour do not run that day, and jobs inside a repeated hour run twice. Likewise, if the system clock is set back, scheduling resumes from the new time and the repeated minutes run again.

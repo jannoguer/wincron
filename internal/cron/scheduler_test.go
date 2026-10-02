@@ -41,16 +41,37 @@ func TestCollectDueSingleMinute(t *testing.T) {
 }
 
 func TestCollectDueClockNotAdvancing(t *testing.T) {
-	s, _ := testScheduler(t, "* * * * * every.exe\n")
+	s, buf := testScheduler(t, "* * * * * every.exe\n")
 	last := at(2026, time.July, 6, 10, 30)
-	for _, now := range []time.Time{last, last.Add(-time.Minute)} {
-		due, newLast := s.collectDue(last, now)
-		if len(due) != 0 {
-			t.Errorf("now=%s: got %d due jobs, want 0", now, len(due))
-		}
-		if !newLast.Equal(last) {
-			t.Errorf("now=%s: newLast = %s, want unchanged %s", now, newLast, last)
-		}
+	due, newLast := s.collectDue(last, last)
+	if len(due) != 0 {
+		t.Errorf("got %d due jobs, want 0", len(due))
+	}
+	if !newLast.Equal(last) {
+		t.Errorf("newLast = %s, want unchanged %s", newLast, last)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("log %q, want nothing logged", buf.String())
+	}
+}
+
+func TestCollectDueClockMovedBack(t *testing.T) {
+	s, buf := testScheduler(t, "* * * * * every.exe\n")
+	last := at(2026, time.July, 6, 12, 0)
+	now := last.Add(-time.Hour)
+	due, newLast := s.collectDue(last, now)
+	if len(due) != 0 {
+		t.Errorf("got %d due jobs on the jump itself, want 0", len(due))
+	}
+	if !newLast.Equal(now) {
+		t.Errorf("newLast = %s, want %s", newLast, now)
+	}
+	if !strings.Contains(buf.String(), "clock moved back 1h0m0s") {
+		t.Errorf("log %q does not report the backward jump", buf.String())
+	}
+	due, _ = s.collectDue(newLast, now.Add(time.Minute))
+	if len(due) != 1 {
+		t.Errorf("got %d due jobs the minute after the jump, want 1", len(due))
 	}
 }
 

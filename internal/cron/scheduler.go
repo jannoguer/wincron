@@ -65,8 +65,14 @@ func (s *Scheduler) runDueJobs(jobCtx context.Context, lastMinute, now time.Time
 // (lastMinute, now]. Each job is returned at most once, so waking up late
 // (system resume, clock jump) cannot launch a burst of concurrent copies.
 func (s *Scheduler) collectDue(lastMinute, now time.Time) ([]Job, time.Time) {
-	if !now.After(lastMinute) {
+	if now.Equal(lastMinute) {
 		return nil, lastMinute
+	}
+	// Waiting for the clock to pass lastMinute again would stall every job
+	// for the size of the jump.
+	if now.Before(lastMinute) {
+		s.logger.Printf("clock moved back %s, resuming from %s", lastMinute.Sub(now), now.Format(time.RFC3339))
+		return nil, now
 	}
 	first := lastMinute.Add(time.Minute)
 	if now.Sub(first) > maxCatchupMinutes*time.Minute {
