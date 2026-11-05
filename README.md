@@ -10,7 +10,8 @@ usage: wincron <command>
 
 commands:
   list       print jobs from the crontab file
-  edit       open the crontab file in an editor, then validate it
+  edit       edit a copy of the crontab, install it once it validates
+  load       validate a file and install it as the crontab
   validate   check the crontab file for errors
   run        run the scheduler in the foreground
   install    install the Windows service
@@ -58,7 +59,7 @@ When both day-of-month and day-of-week are restricted, a day matching either one
 
 The file may be UTF-8 (with or without a BOM) or UTF-16 with a BOM, as Notepad and PowerShell write it.
 
-`wincron.exe edit` opens it in `%EDITOR%` (Notepad if unset; a single executable with no arguments) and validates on save. For a service install this needs an elevated shell.
+`wincron edit` (like `crontab -e`) opens a copy of the file in `%VISUAL%`, then `%EDITOR%`, then Notepad. The editor runs through `cmd.exe`, so it may take arguments (`EDITOR=code --wait`) or be a `.cmd` shim. When you save, the copy is validated: if it is unchanged nothing happens, if it has an error you are asked whether to retry the same edit, and if it is valid it atomically replaces the live file, so the running service never sees a half-edited crontab. If you cannot write the file (a service install under Program Files), `edit` asks for elevation and installs only the copy, with the editor still running as you. `wincron load FILE` validates a file and installs it the same way (like `crontab FILE`).
 
 Commands run with `cmd.exe /C`: pipes, redirection, `&&`, and batch files all work. Unlike classic cron, `%` is not special, so `%VAR%` expands as usual. The working directory is the service's (`System32`), so use absolute paths; `user=` jobs run in the user's profile directory instead.
 

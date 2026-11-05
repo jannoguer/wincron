@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime/debug"
@@ -21,7 +20,8 @@ const usageText = `usage: wincron <command>
 
 commands:
   list       print jobs from the crontab file
-  edit       open the crontab file in an editor, then validate it
+  edit       edit a copy of the crontab, install it once it validates
+  load       validate a file and install it as the crontab
   validate   check the crontab file for errors
   run        run the scheduler in the foreground
   install    install the Windows service
@@ -68,6 +68,8 @@ func main() {
 		err = list(crontabPath)
 	case "edit":
 		err = edit(crontabPath)
+	case "load":
+		err = load(crontabPath, os.Args[2:])
 	case "validate":
 		err = validate(crontabPath)
 	case "run":
@@ -98,21 +100,6 @@ func list(crontabPath string) error {
 	}
 	_, err = os.Stdout.Write(data)
 	return err
-}
-
-// edit opens crontabPath in %EDITOR% (notepad if unset) and validates the
-// result. EDITOR is a single executable; wrap it in a script for arguments.
-func edit(crontabPath string) error {
-	editor := os.Getenv("EDITOR")
-	if editor == "" {
-		editor = "notepad"
-	}
-	cmd := exec.Command(editor, crontabPath)
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("running editor %q: %w", editor, err)
-	}
-	return validate(crontabPath)
 }
 
 func validate(crontabPath string) error {

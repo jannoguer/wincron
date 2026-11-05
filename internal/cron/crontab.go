@@ -74,6 +74,11 @@ func LoadFile(path string) ([]Job, error) {
 	if err != nil {
 		return nil, err
 	}
+	return Parse(data)
+}
+
+// Parse parses the raw bytes of a crontab file.
+func Parse(data []byte) ([]Job, error) {
 	text, err := decodeCrontab(data)
 	if err != nil {
 		return nil, err
