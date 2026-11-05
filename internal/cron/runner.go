@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"syscall"
 	"time"
+	"unicode/utf16"
+	"unicode/utf8"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -116,8 +118,12 @@ func runJob(ctx context.Context, job Job, logger *log.Logger) {
 	duration := time.Since(started).Round(time.Millisecond)
 
 	if len(out.buf) > 0 {
-		logger.Printf("output job L%d:\n%s", job.Line, out.buf)
-		if out.total > int64(len(out.buf)) {
+		truncated := out.total > int64(len(out.buf))
+		if truncated {
+			out.buf = trimPartialRune(out.buf)
+		}
+		logger.Printf("output job L%d:\n%s", job.Line, decodeOutput(out.buf))
+		if truncated {
 			logger.Printf("output job L%d truncated: %d of %d bytes shown", job.Line, len(out.buf), out.total)
 		}
 	}
@@ -189,4 +195,43 @@ func resumeMainThread(pid int) error {
 		return fmt.Errorf("no threads found for pid %d", pid)
 	}
 	return nil
+}
+
+var procGetOEMCP = windows.NewLazySystemDLL("kernel32.dll").NewProc("GetOEMCP")
+
+// decodeOutput returns job output as UTF-8. cmd.exe and most console tools
+// write in the OEM code page, so bytes that are not valid UTF-8 are converted
+// from it; valid UTF-8 is left alone.
+func decodeOutput(b []byte) []byte {
+	if utf8.Valid(b) {
+		return b
+	}
+	codePage, _, _ := procGetOEMCP.Call()
+	return codePageToUTF8(b, uint32(codePage))
+}
+
+// trimPartialRune drops a final UTF-8 character cut short by the output cap,
+// so it does not make otherwise valid UTF-8 look like OEM text.
+func trimPartialRune(b []byte) []byte {
+	for i := 1; i < utf8.UTFMax && i <= len(b); i++ {
+		if utf8.RuneStart(b[len(b)-i]) {
+			if !utf8.FullRune(b[len(b)-i:]) {
+				return b[:len(b)-i]
+			}
+			break
+		}
+	}
+	return b
+}
+
+func codePageToUTF8(b []byte, codePage uint32) []byte {
+	n, err := windows.MultiByteToWideChar(codePage, 0, &b[0], int32(len(b)), nil, 0)
+	if err != nil || n == 0 {
+		return b
+	}
+	wide := make([]uint16, n)
+	if _, err := windows.MultiByteToWideChar(codePage, 0, &b[0], int32(len(b)), &wide[0], n); err != nil {
+		return b
+	}
+	return []byte(string(utf16.Decode(wide)))
 }

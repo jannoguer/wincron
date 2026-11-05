@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"golang.org/x/sys/windows"
 )
@@ -274,5 +275,49 @@ func TestRunJobQuotedPathWithQuotedArgument(t *testing.T) {
 	}
 	if !strings.Contains(got, "finish job L1: exit 0") {
 		t.Errorf("log %q does not report a successful run", got)
+	}
+}
+
+func TestCodePageToUTF8(t *testing.T) {
+	const cp850 = 850
+	if got := string(codePageToUTF8([]byte{'c', 'a', 'f', 0x82}, cp850)); got != "caf\u00e9" {
+		t.Errorf("codePageToUTF8 = %q, want %q", got, "caf\u00e9")
+	}
+}
+
+func TestDecodeOutputLeavesValidUTF8Alone(t *testing.T) {
+	in := []byte("caf\u00e9 \u4e16\u754c")
+	if got := decodeOutput(in); !bytes.Equal(got, in) {
+		t.Errorf("decodeOutput = %q, want unchanged %q", got, in)
+	}
+}
+
+func TestDecodeOutputConvertsOEMText(t *testing.T) {
+	// 0x82 is not valid UTF-8 on its own, so it must be converted.
+	got := decodeOutput([]byte{'a', 0x82})
+	if !utf8.Valid(got) || bytes.Equal(got, []byte{'a', 0x82}) {
+		t.Errorf("decodeOutput = %q, want valid converted UTF-8", got)
+	}
+}
+
+func TestTrimPartialRune(t *testing.T) {
+	full := []byte("a\u00e9")
+	if got := trimPartialRune(full[:2]); string(got) != "a" {
+		t.Errorf("trimPartialRune(cut rune) = %q, want %q", got, "a")
+	}
+	if got := trimPartialRune(full); !bytes.Equal(got, full) {
+		t.Errorf("trimPartialRune(complete) = %q, want unchanged", got)
+	}
+	if got := trimPartialRune([]byte("ab")); string(got) != "ab" {
+		t.Errorf("trimPartialRune(ascii) = %q, want unchanged", got)
+	}
+}
+
+func TestRunJobDecodesOEMOutput(t *testing.T) {
+	// Writes a lone 0x82 byte, which is cp850 "e acute" and invalid UTF-8.
+	job := Job{Command: `powershell -NoProfile -Command "[Console]::OpenStandardOutput().WriteByte(0x82)"`, Line: 1}
+	got := runTestJob(t, context.Background(), job)
+	if strings.Contains(got, "\x82") {
+		t.Errorf("log %q still contains the raw OEM byte", got)
 	}
 }
