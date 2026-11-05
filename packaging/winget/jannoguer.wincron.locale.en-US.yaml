@@ -1,0 +1,17 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
+PackageIdentifier: jannoguer.wincron
+PackageVersion: 3.9.0
+PackageLocale: en-US
+Publisher: jannoguer
+PackageName: wincron
+PackageUrl: https://github.com/jannoguer/wincron
+License: MIT
+LicenseUrl: https://github.com/jannoguer/wincron/blob/main/LICENSE.md
+ShortDescription: cron for Windows, a service that runs jobs from a crontab file.
+Description: wincron runs jobs from a crontab file as a Windows service, with cron schedule syntax, per-user jobs, timeouts, retries and run history. Run 'wincron install' from an elevated shell to install the service.
+Tags:
+  - cron
+  - scheduler
+  - service
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0

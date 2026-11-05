@@ -1,0 +1,21 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
+PackageIdentifier: jannoguer.wincron
+PackageVersion: 3.9.0
+InstallerType: zip
+NestedInstallerType: portable
+NestedInstallerFiles:
+  - RelativeFilePath: wincron.exe
+    PortableCommandAlias: wincron
+ReleaseDate: 2026-11-05
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/jannoguer/wincron/releases/download/v3.9.0/wincron-3.9.0-windows-amd64.zip
+    InstallerSha256: 25A5ECA958D5D1375ECCB9B526BE0F71A2801BF7321D3A9F91C5A8BDFB4513CA
+  - Architecture: x86
+    InstallerUrl: https://github.com/jannoguer/wincron/releases/download/v3.9.0/wincron-3.9.0-windows-386.zip
+    InstallerSha256: 29126162A7B821DA106CFB7987E27C09665068F3F42C028EDC2561BAFAFF3B81
+  - Architecture: arm64
+    InstallerUrl: https://github.com/jannoguer/wincron/releases/download/v3.9.0/wincron-3.9.0-windows-arm64.zip
+    InstallerSha256: 403253B0D535F2B79FA37F73277595BDF872AFAF796C4BC43B3DC5CB948B9D95
+ManifestType: installer
+ManifestVersion: 1.6.0

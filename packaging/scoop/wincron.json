@@ -1,0 +1,40 @@
+{
+    "version": "3.9.0",
+    "description": "cron for Windows: a Windows service that runs jobs from a crontab file",
+    "homepage": "https://github.com/jannoguer/wincron",
+    "license": "MIT",
+    "notes": "Run 'wincron install' from an elevated shell to install the service. Scoop only puts wincron.exe on the PATH.",
+    "architecture": {
+        "64bit": {
+            "url": "https://github.com/jannoguer/wincron/releases/download/v3.9.0/wincron-3.9.0-windows-amd64.zip",
+            "hash": "25a5eca958d5d1375eccb9b526be0f71a2801bf7321d3a9f91c5a8bdfb4513ca"
+        },
+        "32bit": {
+            "url": "https://github.com/jannoguer/wincron/releases/download/v3.9.0/wincron-3.9.0-windows-386.zip",
+            "hash": "29126162a7b821da106cfb7987e27c09665068f3f42c028edc2561bafaff3b81"
+        },
+        "arm64": {
+            "url": "https://github.com/jannoguer/wincron/releases/download/v3.9.0/wincron-3.9.0-windows-arm64.zip",
+            "hash": "403253b0d535f2b79fa37f73277595bdf872afaf796c4bc43b3dc5cb948b9d95"
+        }
+    },
+    "bin": "wincron.exe",
+    "checkver": "github",
+    "autoupdate": {
+        "architecture": {
+            "64bit": {
+                "url": "https://github.com/jannoguer/wincron/releases/download/v$version/wincron-$version-windows-amd64.zip"
+            },
+            "32bit": {
+                "url": "https://github.com/jannoguer/wincron/releases/download/v$version/wincron-$version-windows-386.zip"
+            },
+            "arm64": {
+                "url": "https://github.com/jannoguer/wincron/releases/download/v$version/wincron-$version-windows-arm64.zip"
+            }
+        },
+        "hash": {
+            "url": "https://github.com/jannoguer/wincron/releases/download/v$version/SHA256SUMS",
+            "regex": "$sha256\\s+$basename"
+        }
+    }
+}

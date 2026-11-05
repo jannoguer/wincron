@@ -1,5 +1,18 @@
 # wincron - cron for Windows
 
+## Quickstart
+
+From an elevated shell, in the folder with `wincron.exe`:
+
+```
+wincron install       # copy to Program Files, add to PATH, start the service
+wincron edit          # add a job, e.g.:  */5 * * * * echo hello >> C:\temp\hello.txt
+wincron status        # see the jobs with their next and last runs
+wincron log -f        # follow the log
+```
+
+`wincron test N` runs the job on line `N` right away, to check it before waiting for its time.
+
 > [!CAUTION]
 > By default, `wincron` runs jobs as the highly privileged `NT AUTHORITY\SYSTEM` account, which grants full administrative control but lacks a standard user profile or `PATH`. Proceed with care, and consider using the `user=NAME` parameter to run jobs with reduced, per-user privileges ([see below](#running-jobs-as-a-user)).
 
@@ -119,7 +132,7 @@ The tokens after the schedule are job options only while they start with `user=`
 
 `retry=N` (or `retry=N/DELAY`, such as `retry=3/30s`; the default delay is one minute) runs a failed job again, up to `N` more times, waiting `DELAY` between attempts. A job fails when it exits non-zero or times out. The attempts count as one run: `overlap=no` keeps the job claimed through the waits, `status` shows the final result, and the event log warning is written only after the last attempt. Pending retries are dropped when the service stops.
 
-`power=ac` skips a start while the machine runs on battery and logs a `SKIP` line; a job whose time passes on battery is not made up later (apart from `missed=run`). An unknown power source counts as mains power, so desktops are unaffected. `power=any` is the default. `wincron test` ignores it.
+`power=ac` skips a start while the machine runs on battery and logs a `SKIP` line; a job whose time passes on battery is not made up later, unless it also has `missed=run`, in which case it runs once when mains power returns. An unknown power source counts as mains power, so desktops are unaffected. `power=any` is the default. `wincron test` ignores it.
 
 `wake=yes` wakes a sleeping machine for the job: the service keeps one wake timer set to the earliest next run among the `wake=yes` jobs, and resets it after every minute tick and crontab reload. It does not apply to `@reboot` or `@logon`. Windows must allow wake timers: in the power plan's advanced settings, Sleep > Allow wake timers must be Enable. Machines with Modern Standby (S0 low-power idle) often ignore wake timers or only run them in short maintenance windows, and a machine that is shut down or hibernating without a wake-capable BIOS will not wake. `powercfg /waketimers` (elevated) lists the pending timer. While a `wake=yes` job runs (retries included), wincron holds a system-required power request, so the machine does not go back to sleep in the middle of it; `powercfg /requests` shows it.
 
@@ -134,9 +147,36 @@ done
 2026/07/16 05:00:02 END (SYSTEM) backup.exe: exit 0 (2s)
 ```
 
-`SKIP` lines report runs that did not start (an earlier run still going, or a `user=` job whose user is not logged in), and `WARN` lines report trouble setting up a run. Job starts, captured output (up to 64 KB per run), and exit statuses are written to `wincron.log` next to the executable (mirrored to stdout with `daemon`), or to the absolute path in the `WINCRON_LOG` environment variable (set machine-wide for the service). The log rotates at 10 MB, keeping one previous file as `wincron.log.1`. Job output that is not valid UTF-8 is converted from the console's OEM code page, so accented text stays readable. `wincron log` prints the end of that file (`-n N` lines, default 10) and `wincron log -f` follows it across rotation, like `tail -f`; it reads the same path as the service, honouring `WINCRON_LOG`.
+`SKIP` lines report runs that did not start (an earlier run still going, or a `user=` job whose background logon failed), and `WARN` lines report trouble setting up a run. Job starts, captured output (up to 64 KB per run), and exit statuses are written to `wincron.log` next to the executable (mirrored to stdout with `daemon`), or to the absolute path in the `WINCRON_LOG` environment variable (set machine-wide for the service). The log rotates at 10 MB, keeping one previous file as `wincron.log.1`. Job output that is not valid UTF-8 is converted from the console's OEM code page, so accented text stays readable. `wincron log` prints the end of that file (`-n N` lines, default 10) and `wincron log -f` follows it across rotation, like `tail -f`; it reads the same path as the service, honouring `WINCRON_LOG`.
 
-When the service runs a job that exits non-zero, times out, or is skipped because its `user=` is not logged in, it also writes a Warning to the Windows event log under the `wincron` source, with the command, the result and the tail of its output (view it in Event Viewer under Windows Logs > Application). A skip caused by `overlap=no` is not reported, since it is the option working as intended. If the service fails before the log file is usable, the error is reported to the same event log source.
+When the service runs a job that exits non-zero, times out, or is skipped because its `user=` could not be logged on, it also writes a Warning to the Windows event log under the `wincron` source, with the command, the result and the tail of its output (view it in Event Viewer under Windows Logs > Application). A skip caused by `overlap=no` is not reported, since it is the option working as intended. If the service fails before the log file is usable, the error is reported to the same event log source.
+
+## Troubleshooting
+
+Start with `wincron test N` and `wincron log`: the test runs the line exactly as the service would, and the log shows the command, its output on failure and the exit code.
+
+- `PATH` under SYSTEM: SYSTEM has the machine `PATH` only, not yours. A tool installed per user (`node`, `python` from the Store, anything under `%LOCALAPPDATA%`) is not found. Use its absolute path, or run the job with `user=NAME`.
+- Mapped drives: drive letters you mapped exist only in your own session. Use the UNC path (`\\server\share`), and note that SYSTEM reaches the network as the computer account and a background `user=` logon has no network credentials at all.
+- Working directory: jobs start in the account's profile directory, not where the executable or script lives. Use absolute paths, or `cd /d C:\dir && command`.
+- GUI programs: a job without `user=` runs in session 0 and cannot show a window. Use `user=NAME` with that user logged on.
+- Percent signs: `%` is not special as in classic cron, so `%DATE%` expands.
+- A job that never runs: `wincron validate` shows a crontab error, and the log shows `SKIP` lines for `overlap=no`, `power=ac` and `user=` problems.
+
+## Compared with cron and Task Scheduler
+
+| | wincron | Vixie cron / cronie | Task Scheduler |
+|---|---|---|---|
+| Schedule format | 5 fields, nicknames | 5 fields, nicknames | Trigger dialogs, XML |
+| Plain text, diffable | yes | yes | no (XML export) |
+| Run a missed job | `missed=run` | anacron | "Run task as soon as possible after a missed start" |
+| Run at boot or logon | `@reboot`, `@logon` | `@reboot` | yes |
+| Run as a user, logged off | `user=` (S4U, no password) | yes | yes (password or S4U) |
+| Timeout | `timeout=` | no | yes |
+| No overlapping runs | `overlap=no` | no | yes |
+| Retry on failure | `retry=` | no | yes |
+| Skip on battery | `power=ac` | no | yes |
+| Wake the machine | `wake=yes` | no | yes |
+| Failure reports | event log | mail (`MAILTO`) | event log, history |
 
 ## Missed minutes and clock changes
 
@@ -153,3 +193,9 @@ Schedules follow local wall-clock time, with the same rules as Vixie cron:
 - When the clock jumps forward (the spring DST change), jobs inside the skipped hour run once, at the jump.
 - When the clock moves back by less than 3 hours (the autumn DST change, or setting the clock back), only jobs with a `*` in the minute or hour field (`* * * * *`, `0 * * * *`, `*/5 ...`) run again until the clock passes the time it came from. A job at a fixed time, such as `30 1 * * *`, does not run twice.
 - When the clock moves back by 3 hours or more, scheduling resumes from the new time and nothing is replayed.
+
+## Release binaries are unsigned
+
+The release zips are not code signed, so SmartScreen may warn. Each release lists the SHA-256 of its zips in `SHA256SUMS`; check the download against it before running `install`: `(Get-FileHash wincron-X.Y.Z-windows-amd64.zip).Hash` must match the line for that file.
+
+`packaging/scoop/wincron.json` and `packaging/winget/` hold a Scoop manifest and winget manifests for the release zips (versions are updated when they are submitted). Both only place `wincron.exe` on the `PATH`; run `wincron install` afterwards.
