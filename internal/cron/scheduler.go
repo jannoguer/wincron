@@ -105,7 +105,7 @@ func (s *Scheduler) runRebootJobs(jobCtx context.Context) {
 
 func (s *Scheduler) launch(jobCtx context.Context, job Job) {
 	if job.NoOverlap && !s.claim(job.key) {
-		s.logger.Printf("skip job L%d: an earlier run is still going", job.Line)
+		s.logger.Printf("SKIP %s: an earlier run is still going", job.label())
 		return
 	}
 	s.wg.Add(1)

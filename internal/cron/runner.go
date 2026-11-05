@@ -41,6 +41,16 @@ func (b *cappedBuffer) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+// label names a job in the log the way cronie does: the account in
+// parentheses, then the command.
+func (j Job) label() string {
+	account := "SYSTEM"
+	if j.User != "" {
+		account = j.User
+	}
+	return "(" + account + ") " + j.Command
+}
+
 func runJob(ctx context.Context, job Job, logger *log.Logger) {
 	if job.Timeout > 0 {
 		var cancel context.CancelFunc
@@ -59,7 +69,7 @@ func runJob(ctx context.Context, job Job, logger *log.Logger) {
 	if job.User != "" {
 		token, env, err := userContext(job.User)
 		if err != nil {
-			logger.Printf("skip job L%d: run as %q: %v", job.Line, job.User, err)
+			logger.Printf("SKIP %s: %v", job.label(), err)
 			return
 		}
 		defer func() { _ = token.Close() }()
@@ -79,7 +89,7 @@ func runJob(ctx context.Context, job Job, logger *log.Logger) {
 		if home, err := os.UserHomeDir(); err == nil {
 			cmd.Dir = home
 		} else {
-			logger.Printf("job L%d: no home directory, starting in the scheduler's working directory: %v", job.Line, err)
+			logger.Printf("WARN %s: no home directory, starting in the scheduler's working directory: %v", job.label(), err)
 		}
 	}
 
@@ -98,27 +108,23 @@ func runJob(ctx context.Context, job Job, logger *log.Logger) {
 			return cmd.Process.Kill()
 		}
 		if err := setKillOnClose(killJob); err != nil {
-			logger.Printf("job L%d: cannot set kill-on-close, descendants may outlive the run: %v", job.Line, err)
+			logger.Printf("WARN %s: cannot set kill-on-close, descendants may outlive the run: %v", job.label(), err)
 		}
 		// Start suspended: a child spawned before assignment to the job
 		// object would escape tree termination.
 		cmd.SysProcAttr.CreationFlags |= windows.CREATE_SUSPENDED
 	}
 
-	if job.User != "" {
-		logger.Printf("start job L%d as %s: %s", job.Line, job.User, job.Command)
-	} else {
-		logger.Printf("start job L%d: %s", job.Line, job.Command)
-	}
+	logger.Printf("CMD %s", job.label())
 	started := time.Now()
 	err := cmd.Start()
 	if err == nil {
 		if killJobErr == nil {
 			if aerr := assignToJobObject(killJob, cmd.Process.Pid); aerr != nil {
-				logger.Printf("job L%d: cannot track process tree: %v", job.Line, aerr)
+				logger.Printf("WARN %s: cannot track process tree: %v", job.label(), aerr)
 			}
 			if rerr := resumeMainThread(cmd.Process.Pid); rerr != nil {
-				logger.Printf("job L%d: cannot resume suspended process, killing: %v", job.Line, rerr)
+				logger.Printf("WARN %s: cannot resume suspended process, killing: %v", job.label(), rerr)
 				_ = cmd.Process.Kill()
 			}
 		}
@@ -131,20 +137,20 @@ func runJob(ctx context.Context, job Job, logger *log.Logger) {
 		if truncated {
 			out.buf = trimPartialRune(out.buf)
 		}
-		logger.Printf("output job L%d:\n%s", job.Line, decodeOutput(out.buf))
+		logger.Printf("OUT %s:\n%s", job.label(), decodeOutput(out.buf))
 		if truncated {
-			logger.Printf("output job L%d truncated: %d of %d bytes shown", job.Line, len(out.buf), out.total)
+			logger.Printf("OUT %s: truncated, %d of %d bytes shown", job.label(), len(out.buf), out.total)
 		}
 	}
 	if err != nil {
 		if job.Timeout > 0 && errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			logger.Printf("finish job L%d: timed out after %s", job.Line, job.Timeout)
+			logger.Printf("END %s: timed out after %s", job.label(), job.Timeout)
 			return
 		}
-		logger.Printf("finish job L%d: %v (%s)", job.Line, err, duration)
+		logger.Printf("END %s: %v (%s)", job.label(), err, duration)
 		return
 	}
-	logger.Printf("finish job L%d: exit 0 (%s)", job.Line, duration)
+	logger.Printf("END %s: exit 0 (%s)", job.label(), duration)
 }
 
 // setKillOnClose configures the job object to terminate every process it

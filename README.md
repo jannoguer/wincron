@@ -97,7 +97,16 @@ The tokens after the schedule are job options only while they start with `user=`
 
 ## Logging
 
-Job starts, captured output (up to 64 KB per run), and exit statuses are written to `wincron.log` next to the executable (mirrored to stdout with `daemon`), or to the absolute path in the `WINCRON_LOG` environment variable (set machine-wide for the service). The log rotates at 10 MB, keeping one previous file as `wincron.log.1`. Job output that is not valid UTF-8 is converted from the console's OEM code page, so accented text stays readable. If the service fails before the log file is usable, the error is reported to the Windows event log under the `wincron` source.
+Each run is logged in the style of cronie, naming the account and the command:
+
+```
+2026/07/16 05:00:00 CMD (SYSTEM) backup.exe
+2026/07/16 05:00:02 OUT (SYSTEM) backup.exe:
+done
+2026/07/16 05:00:02 END (SYSTEM) backup.exe: exit 0 (2s)
+```
+
+`SKIP` lines report runs that did not start (an earlier run still going, or a `user=` job whose user is not logged in), and `WARN` lines report trouble setting up a run. Job starts, captured output (up to 64 KB per run), and exit statuses are written to `wincron.log` next to the executable (mirrored to stdout with `daemon`), or to the absolute path in the `WINCRON_LOG` environment variable (set machine-wide for the service). The log rotates at 10 MB, keeping one previous file as `wincron.log.1`. Job output that is not valid UTF-8 is converted from the console's OEM code page, so accented text stays readable. If the service fails before the log file is usable, the error is reported to the Windows event log under the `wincron` source.
 
 ## Missed minutes and clock changes
 

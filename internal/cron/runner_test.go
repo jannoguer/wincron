@@ -55,7 +55,7 @@ func runTestJob(t *testing.T, ctx context.Context, job Job) string {
 
 func TestRunJobCapturesOutput(t *testing.T) {
 	got := runTestJob(t, context.Background(), Job{Command: "echo hello wincron", Line: 3})
-	for _, want := range []string{"start job L3: echo hello wincron", "output job L3", "hello wincron", "finish job L3: exit 0"} {
+	for _, want := range []string{"CMD (SYSTEM) echo hello wincron", "OUT (SYSTEM) echo hello wincron:", "hello wincron", "END (SYSTEM) echo hello wincron: exit 0"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("log %q does not contain %q", got, want)
 		}
@@ -64,7 +64,7 @@ func TestRunJobCapturesOutput(t *testing.T) {
 
 func TestRunJobReportsExitCode(t *testing.T) {
 	got := runTestJob(t, context.Background(), Job{Command: "exit 7", Line: 1})
-	if !strings.Contains(got, "finish job L1: exit status 7") {
+	if !strings.Contains(got, "END (SYSTEM) exit 7: exit status 7") {
 		t.Errorf("log %q does not report exit status 7", got)
 	}
 }
@@ -80,10 +80,10 @@ func TestRunJobPassesEnv(t *testing.T) {
 func TestRunJobTruncatesLongOutput(t *testing.T) {
 	cmd := `powershell -NoProfile -Command "Write-Output ('x'*100000)"`
 	got := runTestJob(t, context.Background(), Job{Command: cmd, Line: 2})
-	if !strings.Contains(got, "output job L2 truncated:") {
+	if !strings.Contains(got, "OUT (SYSTEM) "+cmd+": truncated,") {
 		t.Errorf("log %q does not mention truncation", got)
 	}
-	if !strings.Contains(got, "finish job L2: exit 0") {
+	if !strings.Contains(got, "END (SYSTEM) "+cmd+": exit 0") {
 		t.Errorf("log %q does not report success", got)
 	}
 }
@@ -101,7 +101,7 @@ func TestRunJobCancelDoesNotHang(t *testing.T) {
 	cancel()
 	select {
 	case got := <-done:
-		if !strings.Contains(got, "finish job L4") {
+		if !strings.Contains(got, "END (SYSTEM) ping -n 30 127.0.0.1") {
 			t.Errorf("log %q does not contain finish line", got)
 		}
 	case <-time.After(pipeWaitDelay + 10*time.Second):
@@ -157,7 +157,7 @@ func TestKillOnJobCloseTerminatesDetachedChild(t *testing.T) {
 	if elapsed := time.Since(runStarted); elapsed > pipeWaitDelay+2*time.Second {
 		t.Fatalf("runJob took %s, want it to return near WaitDelay (%s) rather than waiting for the 30s ping", elapsed, pipeWaitDelay)
 	}
-	if !strings.Contains(got, "finish job L5:") {
+	if !strings.Contains(got, "END (SYSTEM) "+cmd+":") {
 		t.Fatalf("log %q does not contain finish line", got)
 	}
 	// Long enough to prove the child was killed rather than still running.
@@ -245,7 +245,7 @@ func TestRunJobTimeoutTerminatesJob(t *testing.T) {
 	case <-time.After(30 * time.Second):
 		t.Fatal("job outlived its timeout")
 	}
-	if !strings.Contains(got, "finish job L4: timed out after 1s") {
+	if !strings.Contains(got, "END (SYSTEM) ping -n 30 127.0.0.1: timed out after 1s") {
 		t.Errorf("log %q does not report the timeout", got)
 	}
 }
@@ -253,7 +253,7 @@ func TestRunJobTimeoutTerminatesJob(t *testing.T) {
 func TestRunJobFinishesInsideTimeout(t *testing.T) {
 	job := Job{Command: "echo quick", Line: 5, Timeout: time.Minute}
 	got := runTestJob(t, context.Background(), job)
-	if !strings.Contains(got, "finish job L5: exit 0") {
+	if !strings.Contains(got, "END (SYSTEM) echo quick: exit 0") {
 		t.Errorf("log %q does not report a successful run", got)
 	}
 	if strings.Contains(got, "timed out") {
@@ -273,7 +273,7 @@ func TestRunJobQuotedPathWithQuotedArgument(t *testing.T) {
 	if !strings.Contains(got, "arg=hello world") {
 		t.Errorf("log %q does not contain the script output", got)
 	}
-	if !strings.Contains(got, "finish job L1: exit 0") {
+	if !strings.Contains(got, "END (SYSTEM) "+job.Command+": exit 0") {
 		t.Errorf("log %q does not report a successful run", got)
 	}
 }
@@ -328,5 +328,14 @@ func TestRunJobStartsInHomeDirectory(t *testing.T) {
 	got := runTestJob(t, context.Background(), Job{Command: "cd", Line: 1})
 	if !strings.Contains(got, home) {
 		t.Errorf("log %q does not show the job starting in %s", got, home)
+	}
+}
+
+func TestJobLabel(t *testing.T) {
+	if got := (Job{Command: "backup.exe"}).label(); got != "(SYSTEM) backup.exe" {
+		t.Errorf("label = %q, want (SYSTEM) backup.exe", got)
+	}
+	if got := (Job{Command: "backup.exe", User: "jan"}).label(); got != "(jan) backup.exe" {
+		t.Errorf("label = %q, want (jan) backup.exe", got)
 	}
 }

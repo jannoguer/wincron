@@ -233,10 +233,10 @@ func TestLaunchSkipsOverlappingRun(t *testing.T) {
 	cancel()
 	s.wg.Wait()
 
-	if got := strings.Count(buf.String(), "start job L1"); got != 1 {
+	if got := strings.Count(buf.String(), "CMD (SYSTEM)"); got != 1 {
 		t.Errorf("started the job %d times, want 1", got)
 	}
-	if !strings.Contains(buf.String(), "skip job L1: an earlier run is still going") {
+	if !strings.Contains(buf.String(), "SKIP (SYSTEM) ping -n 30 127.0.0.1: an earlier run is still going") {
 		t.Errorf("log %q does not report the skipped run", buf.String())
 	}
 	if !s.claim(s.jobs[0].key) {
@@ -270,13 +270,13 @@ func TestOverlapSurvivesLineShift(t *testing.T) {
 	s.wg.Wait()
 
 	log := buf.String()
-	if !strings.Contains(log, "start job L1: echo other") {
+	if !strings.Contains(log, "CMD (SYSTEM) echo other") {
 		t.Errorf("log %q: the unrelated job now on line 1 did not start", log)
 	}
-	if !strings.Contains(log, "skip job L2: an earlier run is still going") {
+	if !strings.Contains(log, "SKIP (SYSTEM) ping -n 30 127.0.0.1: an earlier run is still going") {
 		t.Errorf("log %q: the moved job was not recognized as still running", log)
 	}
-	if got := strings.Count(log, "ping -n 30"); got != 1 {
+	if got := strings.Count(log, "CMD (SYSTEM) ping -n 30"); got != 1 {
 		t.Errorf("started the moved job %d times, want 1", got)
 	}
 }
@@ -291,7 +291,7 @@ func TestOverlapTracksIdenticalLinesSeparately(t *testing.T) {
 	s.launch(ctx, s.jobs[1])
 	cancel()
 	s.wg.Wait()
-	if strings.Contains(buf.String(), "skip job") {
+	if strings.Contains(buf.String(), "SKIP") {
 		t.Errorf("log %q: a duplicate line was treated as the same job", buf.String())
 	}
 }
@@ -305,10 +305,10 @@ func TestLaunchAllowsOverlapByDefault(t *testing.T) {
 	s.launch(ctx, s.jobs[0])
 	cancel()
 	s.wg.Wait()
-	if got := strings.Count(buf.String(), "start job L1"); got != 2 {
+	if got := strings.Count(buf.String(), "CMD (SYSTEM)"); got != 2 {
 		t.Errorf("started the job %d times, want 2", got)
 	}
-	if strings.Contains(buf.String(), "skip job") {
+	if strings.Contains(buf.String(), "SKIP") {
 		t.Errorf("log %q skipped a run without overlap=no", buf.String())
 	}
 }
