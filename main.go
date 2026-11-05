@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"os"
 	"os/signal"
@@ -15,22 +16,6 @@ import (
 
 // version is stamped via -ldflags "-X main.version=..." in release builds.
 var version = "dev"
-
-const usageText = `usage: wincron <command>
-
-commands:
-  list       print jobs from the crontab file
-  edit       edit a copy of the crontab, install it once it validates
-  load       validate a file and install it as the crontab
-  validate   check the crontab file for errors
-  run        run the scheduler in the foreground
-  install    install the Windows service
-  uninstall  remove the Windows service
-  start      start the service
-  stop       stop the service
-  version    print the wincron version
-
-  -h, --help show this help message`
 
 func main() {
 	exePath, err := os.Executable()
@@ -56,40 +41,26 @@ func main() {
 		return
 	}
 
-	var command string
-	if len(os.Args) > 1 {
-		command = os.Args[1]
-	}
+	os.Exit(dispatch(commands(exePath, crontabPath, logPath), os.Args[1:], os.Stdout, os.Stderr))
+}
 
-	switch command {
-	case "-h", "--help":
-		fmt.Println(usageText)
-	case "list":
-		err = list(crontabPath)
-	case "edit":
-		err = edit(crontabPath)
-	case "load":
-		err = load(crontabPath, os.Args[2:])
-	case "validate":
-		err = validate(crontabPath)
-	case "run":
-		err = runForeground(crontabPath, logPath)
-	case "install":
-		err = installService(exePath)
-	case "uninstall":
-		err = uninstallService()
-	case "start":
-		err = startService()
-	case "stop":
-		err = stopService()
-	case "version":
-		fmt.Println(printableVersion())
-	default:
-		fmt.Fprintln(os.Stderr, usageText)
-		os.Exit(2)
+func commands(exePath, crontabPath, logPath string) []command {
+	simple := func(name, args, summary string, f func() error) command {
+		return command{name, args, summary, func(*flag.FlagSet) func([]string) error { return noArgs(name, f) }}
 	}
-	if err != nil {
-		fatal(err)
+	return []command{
+		simple("list", "", "print jobs from the crontab file", func() error { return list(crontabPath) }),
+		simple("edit", "", "edit a copy of the crontab, install it once it validates", func() error { return edit(crontabPath) }),
+		{"load", "<file>", "validate a file and install it as the crontab", func(*flag.FlagSet) func([]string) error {
+			return func(args []string) error { return load(crontabPath, args) }
+		}},
+		simple("validate", "", "check the crontab file for errors", func() error { return validate(crontabPath) }),
+		simple("run", "", "run the scheduler in the foreground", func() error { return runForeground(crontabPath, logPath) }),
+		simple("install", "", "install the Windows service", func() error { return installService(exePath) }),
+		simple("uninstall", "", "remove the Windows service", uninstallService),
+		simple("start", "", "start the service", startService),
+		simple("stop", "", "stop the service", stopService),
+		simple("version", "", "print the wincron version", func() error { fmt.Println(printableVersion()); return nil }),
 	}
 }
 

@@ -6,7 +6,7 @@
 ## Usage
 
 ```
-usage: wincron <command>
+usage: wincron <command> [-h]
 
 commands:
   list       print jobs from the crontab file
@@ -19,6 +19,9 @@ commands:
   start      start the service
   stop       stop the service
   version    print the wincron version
+  help       show help, or help for one command
+
+Run 'wincron <command> -h' for the details of one command.
 ```
 
 The service commands need an elevated shell. `run` runs the scheduler in the current console (Ctrl+C to stop) and mirrors the log to stdout.

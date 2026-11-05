@@ -105,11 +105,11 @@ func (s *editSession) run() error {
 			return s.keep(tmpPath, err)
 		}
 		if bytes.Equal(edited, original) {
-			s.printf("no changes made to crontab\n")
+			fprintf(s.out, "no changes made to crontab\n")
 			return os.Remove(tmpPath)
 		}
 		if _, err := cron.Parse(edited); err != nil {
-			s.printf("wincron: %v\n", err)
+			fprintf(s.out, "wincron: %v\n", err)
 			if s.askRetry(input) {
 				continue
 			}
@@ -118,18 +118,13 @@ func (s *editSession) run() error {
 		if err := s.install(tmpPath); err != nil {
 			return s.keep(tmpPath, err)
 		}
-		s.printf("crontab installed\n")
+		fprintf(s.out, "crontab installed\n")
 		return os.Remove(tmpPath)
 	}
 }
 
-// printf writes to the console; a failed write has no recovery.
-func (s *editSession) printf(format string, args ...any) {
-	_, _ = fmt.Fprintf(s.out, format, args...)
-}
-
 func (s *editSession) askRetry(input *bufio.Reader) bool {
-	s.printf("Do you want to retry the same edit? (y/n) ")
+	fprintf(s.out, "Do you want to retry the same edit? (y/n) ")
 	answer, _ := input.ReadString('\n')
 	answer = strings.ToLower(strings.TrimSpace(answer))
 	return answer == "y" || answer == "yes"
@@ -191,7 +186,7 @@ func moveReplace(from, to string) error {
 
 func load(crontabPath string, args []string) error {
 	if len(args) != 1 {
-		return errors.New("usage: wincron load <file>")
+		return usageError{errors.New("load takes exactly one file")}
 	}
 	if err := loadCrontab(crontabPath, args[0]); err != nil {
 		return err
