@@ -96,6 +96,9 @@ func runJob(ctx context.Context, job Job, logger *log.Logger, stream io.Writer) 
 		}
 		defer func() { _ = token.Close() }()
 		spec.token = token
+		// A service has no window station in the user's session, so name
+		// the interactive one or GUI programs have nowhere to show.
+		spec.desktop = interactiveDesktop
 		// Keep the console hidden.
 		spec.flags |= windows.CREATE_NO_WINDOW
 		spec.env = mergeEnv(env, job.Envs)
@@ -168,6 +171,9 @@ func runJob(ctx context.Context, job Job, logger *log.Logger, stream io.Writer) 
 	logger.Printf("END %s: exit 0 (%s)", job.label(), duration)
 	return RunResult{OK: true, Summary: "exit 0", Output: output}
 }
+
+// interactiveDesktop is the logged-on user's visible desktop.
+const interactiveDesktop = `winsta0\default`
 
 // shellPath returns the command interpreter jobs run under.
 func shellPath() (string, error) {

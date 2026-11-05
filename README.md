@@ -95,6 +95,8 @@ Names must match `[A-Za-z_][A-Za-z0-9_]*`; whitespace around the name and value 
 > [!IMPORTANT]
 > The user must already be logged in when the job triggers, otherwise the run is skipped and logged. A disconnected session (fast user switching, a dropped remote session) counts as logged in; an active session is preferred.
 
+A `user=` job runs on the user's own desktop, so a GUI program it starts (`notepad`, a tray tool) is visible to that user. A job without `user=` runs as SYSTEM in the non-interactive session 0, where windows are never shown; use `user=` for anything that needs a window.
+
 `user=` jobs require the scheduler itself to run as `SYSTEM`, the normal service install. A foreground `wincron.exe daemon` from a regular console skips them.
 
 The tokens after the schedule are job options only while they start with `user=`, `timeout=`, or `overlap=` (case-insensitive); run a command whose first word starts with one of those through `cmd /c`. A standalone `USER=name` line is an environment assignment, not a user field. `crontab.txt` remains the privilege boundary: jobs default to `SYSTEM`, so only administrators should be able to edit the file.
