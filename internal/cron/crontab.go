@@ -38,6 +38,9 @@ type Job struct {
 	User      string
 	Timeout   time.Duration
 	NoOverlap bool
+	// MissedRun makes the job run once after a period the scheduler was not
+	// running (missed=run), anacron style.
+	MissedRun bool
 	// key is the line text plus its occurrence count, stable when an edit
 	// shifts line numbers.
 	key string
@@ -117,6 +120,9 @@ func Parse(data []byte) ([]Job, error) {
 				if command == "" {
 					return nil, fmt.Errorf("line %d: @reboot requires a command", lineNo)
 				}
+				if opts.MissedRun {
+					return nil, fmt.Errorf("line %d: missed= does not apply to @reboot", lineNo)
+				}
 				job := opts.job(command, lineNo, envs)
 				job.Reboot = true
 				job.Spec = "@reboot"
@@ -171,6 +177,9 @@ func (j Job) Options() string {
 	if j.NoOverlap {
 		parts = append(parts, "overlap=no")
 	}
+	if j.MissedRun {
+		parts = append(parts, "missed=run")
+	}
 	return strings.Join(parts, " ")
 }
 
@@ -186,7 +195,7 @@ func buildScheduledJob(line string, lineNo int, schedule Schedule, skipFields in
 		switch {
 		case opts.User != "":
 			return Job{}, fmt.Errorf("line %d: expected a command after user=%s", lineNo, opts.User)
-		case opts.Timeout > 0 || opts.NoOverlap:
+		case opts != jobOptions{}:
 			return Job{}, fmt.Errorf("line %d: expected a command after the job options", lineNo)
 		default:
 			return Job{}, fmt.Errorf("line %d: %s requires a command", lineNo, label)
@@ -203,9 +212,10 @@ type jobOptions struct {
 	User      string
 	Timeout   time.Duration
 	NoOverlap bool
+	MissedRun bool
 }
 
-var optionKeys = []string{"user=", "timeout=", "overlap="}
+var optionKeys = []string{"user=", "timeout=", "overlap=", "missed="}
 
 func (o jobOptions) job(command string, lineNo int, envs []string) Job {
 	return Job{
@@ -215,6 +225,7 @@ func (o jobOptions) job(command string, lineNo int, envs []string) Job {
 		User:      o.User,
 		Timeout:   o.Timeout,
 		NoOverlap: o.NoOverlap,
+		MissedRun: o.MissedRun,
 	}
 }
 
@@ -236,6 +247,15 @@ func (o *jobOptions) set(key, value string, lineNo int) error {
 			o.NoOverlap = true
 		default:
 			return fmt.Errorf("line %d: overlap= requires yes or no", lineNo)
+		}
+	case "missed=":
+		switch strings.ToLower(value) {
+		case "run":
+			o.MissedRun = true
+		case "skip":
+			o.MissedRun = false
+		default:
+			return fmt.Errorf("line %d: missed= requires run or skip", lineNo)
 		}
 	}
 	return nil

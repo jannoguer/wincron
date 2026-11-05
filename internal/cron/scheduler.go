@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"slices"
 	"sync"
 	"time"
 )
@@ -66,6 +67,7 @@ func (s *Scheduler) Run(ctx context.Context) {
 
 	s.logger.Printf("scheduler started, %d jobs from %s", len(s.jobList()), s.crontabPath)
 	s.runRebootJobs(jobCtx)
+	s.runMissedJobs(jobCtx, time.Now(), nil)
 	lastMinute := time.Now().Truncate(time.Minute)
 	for {
 		wake := time.Now().Truncate(time.Minute).Add(time.Minute)
@@ -88,7 +90,50 @@ func (s *Scheduler) runDueJobs(jobCtx context.Context, lastMinute, now time.Time
 	for _, job := range due {
 		s.launch(jobCtx, job)
 	}
+	s.runMissedJobs(jobCtx, now, due)
 	return last
+}
+
+// runMissedJobs starts the missed=run jobs that should have run while the
+// scheduler was not looking (stopped, or asleep for longer than the catch-up
+// window), except those in due, which are already starting.
+func (s *Scheduler) runMissedJobs(jobCtx context.Context, now time.Time, due []Job) {
+	for _, job := range s.missedJobs(now, due) {
+		s.logger.Printf("MISSED %s: running it now", job.label())
+		s.launch(jobCtx, job)
+	}
+}
+
+// missedJobs returns the missed=run jobs whose latest scheduled time up to
+// now is later than both their last start and the moment they were first
+// seen, so a new job never fires on first sight. A job still running under
+// overlap=no is not reported again every minute.
+func (s *Scheduler) missedJobs(now time.Time, due []Job) []Job {
+	var missed []Job
+	for _, job := range s.jobList() {
+		if !job.MissedRun || job.Reboot || slices.ContainsFunc(due, func(d Job) bool { return d.key == job.key }) {
+			continue
+		}
+		prev, ok := job.Schedule.Prev(now)
+		history, known := s.state.Lookup(job)
+		if !ok || !known {
+			continue
+		}
+		since := history.FirstSeen
+		if history.LastStart.After(since) {
+			since = history.LastStart
+		}
+		if prev.After(since) && (!job.NoOverlap || !s.isRunning(job.key)) {
+			missed = append(missed, job)
+		}
+	}
+	return missed
+}
+
+func (s *Scheduler) isRunning(key string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.running[key]
 }
 
 // collectDue returns the jobs that match at least one minute since

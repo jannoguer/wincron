@@ -101,7 +101,7 @@ A `user=` job runs on the user's own desktop, so a GUI program it starts (`notep
 
 `user=` jobs require the scheduler itself to run as `SYSTEM`, the normal service install. A foreground `wincron.exe daemon` from a regular console skips them.
 
-The tokens after the schedule are job options only while they start with `user=`, `timeout=`, or `overlap=` (case-insensitive); run a command whose first word starts with one of those through `cmd /c`. A standalone `USER=name` line is an environment assignment, not a user field. `crontab.txt` remains the privilege boundary: jobs default to `SYSTEM`, so only administrators should be able to edit the file.
+The tokens after the schedule are job options only while they start with `user=`, `timeout=`, `overlap=`, or `missed=` (case-insensitive); run a command whose first word starts with one of those through `cmd /c`. A standalone `USER=name` line is an environment assignment, not a user field. `crontab.txt` remains the privilege boundary: jobs default to `SYSTEM`, so only administrators should be able to edit the file.
 
 > [!TIP]
 > `Get-LocalUser` lists the accounts on the machine.
@@ -130,6 +130,12 @@ done
 When the service runs a job that exits non-zero, times out, or is skipped because its `user=` is not logged in, it also writes a Warning to the Windows event log under the `wincron` source, with the command, the result and the tail of its output (view it in Event Viewer under Windows Logs > Application). A skip caused by `overlap=no` is not reported, since it is the option working as intended. If the service fails before the log file is usable, the error is reported to the same event log source.
 
 ## Missed minutes and clock changes
+
+```
+0 5 * * * missed=run backup.exe
+```
+
+`missed=run` makes a job anacron-style: if its latest scheduled time passed while the scheduler was not running (the machine was off or asleep for longer than the catch-up window below), the job runs once, at service start or on the first tick after resume, however many runs were missed and however long ago. It is judged against the run history in `wincron-state.json`, and a job the scheduler sees for the first time never runs on the spot. The default, `missed=skip`, drops missed runs. It does not apply to `@reboot`.
 
 If the scheduler wakes up late (machine asleep, heavy load), each job due during the missed window is started once (not once per missed minute), and minutes missed more than 60 minutes ago are skipped entirely.
 
