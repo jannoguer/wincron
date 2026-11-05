@@ -173,7 +173,11 @@ func Parse(data []byte) ([]Job, error) {
 func (j Job) Options() string {
 	var parts []string
 	if j.User != "" {
-		parts = append(parts, "user="+j.User)
+		user := j.User
+		if strings.IndexFunc(user, unicode.IsSpace) >= 0 {
+			user = `"` + user + `"`
+		}
+		parts = append(parts, "user="+user)
 	}
 	if j.Timeout > 0 {
 		parts = append(parts, "timeout="+j.Timeout.String())

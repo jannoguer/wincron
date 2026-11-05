@@ -451,3 +451,16 @@ func TestLoadFileRejectsOtherEncodings(t *testing.T) {
 		})
 	}
 }
+
+func TestOptionsQuotesUserWithSpaces(t *testing.T) {
+	jobs, err := LoadFile(writeCrontab(t, "0 5 * * * user=\"Jan Noguer\" timeout=1m a.exe\n0 5 * * * user=jan b.exe\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := jobs[0].Options(), `user="Jan Noguer" timeout=1m0s`; got != want {
+		t.Errorf("Options = %q, want %q", got, want)
+	}
+	if got, want := jobs[1].Options(), "user=jan"; got != want {
+		t.Errorf("Options = %q, want %q", got, want)
+	}
+}
