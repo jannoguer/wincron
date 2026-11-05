@@ -10,6 +10,10 @@ import (
 type Schedule struct {
 	minute, hour, dayOfMonth, month, dayOfWeek uint64
 	dayOfMonthRestricted, dayOfWeekRestricted  bool
+	// minuteStar and hourStar record a field starting with "*"; Vixie cron
+	// calls such jobs wildcard jobs and lets only them repeat when the clock
+	// moves back.
+	minuteStar, hourStar bool
 }
 
 // Standard three-letter cron names for the month and day-of-week fields.
@@ -48,6 +52,8 @@ func ParseSchedule(fields []string) (Schedule, error) {
 	}
 	// Like Vixie cron, any field starting with "*" (such as */2) counts as
 	// unrestricted, so the two day fields are ANDed rather than ORed.
+	s.minuteStar = strings.HasPrefix(fields[0], "*")
+	s.hourStar = strings.HasPrefix(fields[1], "*")
 	s.dayOfMonthRestricted = !strings.HasPrefix(fields[2], "*")
 	s.dayOfWeekRestricted = !strings.HasPrefix(fields[4], "*")
 	return s, nil
@@ -104,6 +110,11 @@ func parseFieldValue(s string, aliases map[string]int) (int, error) {
 		}
 	}
 	return strconv.Atoi(s)
+}
+
+// isWildcard reports whether the minute or hour field starts with "*".
+func (s Schedule) isWildcard() bool {
+	return s.minuteStar || s.hourStar
 }
 
 func (s Schedule) Matches(t time.Time) bool {

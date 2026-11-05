@@ -13,11 +13,18 @@ const jobShutdownGrace = 20 * time.Second
 
 const maxCatchupMinutes = 60
 
+// maxClockBack is how far the wall clock may move back and still count as a
+// DST-style repeat rather than a reset.
+const maxClockBack = 3 * time.Hour
+
 type Scheduler struct {
 	crontabPath string
 	jobs        []Job
 	mtime       time.Time
 	lastProblem string
+	// repeatUntil is the wall minute the clock moved back from, while it is
+	// still being replayed; zero otherwise.
+	repeatUntil time.Time
 	logger      *log.Logger
 	wg          sync.WaitGroup
 	mu          sync.Mutex
@@ -61,38 +68,65 @@ func (s *Scheduler) runDueJobs(jobCtx context.Context, lastMinute, now time.Time
 	return last
 }
 
-// collectDue returns the jobs that match at least one minute in
-// (lastMinute, now]. Each job is returned at most once, so waking up late
-// (system resume, clock jump) cannot launch a burst of concurrent copies.
+// collectDue returns the jobs that match at least one minute since
+// lastMinute, up to now. Each job is returned at most once, so waking up
+// late (system resume, clock jump) cannot launch a burst of concurrent
+// copies.
+//
+// Minutes are walked on the wall clock, as Vixie cron does, so a job inside
+// the hour a DST change skips runs once at the jump. When the wall clock
+// moves back by less than maxClockBack (DST fall-back, a manual set-back),
+// only wildcard jobs run until it passes the point it came from, so most
+// jobs do not run twice for the same wall minute.
 func (s *Scheduler) collectDue(lastMinute, now time.Time) ([]Job, time.Time) {
 	if now.Equal(lastMinute) {
 		return nil, lastMinute
 	}
-	// Waiting for the clock to pass lastMinute again would stall every job
-	// for the size of the jump.
-	if now.Before(lastMinute) {
-		s.logger.Printf("clock moved back %s, resuming from %s", lastMinute.Sub(now), now.Format(time.RFC3339))
-		return nil, now
-	}
-	first := lastMinute.Add(time.Minute)
-	if now.Sub(first) > maxCatchupMinutes*time.Minute {
+	wallNow, wallLast := wallClock(now), wallClock(lastMinute)
+	first := wallLast.Add(time.Minute)
+	switch {
+	case !wallNow.After(wallLast):
+		back := wallLast.Sub(wallNow)
+		// A big jump back would stall every job until the clock caught up.
+		if back >= maxClockBack {
+			s.logger.Printf("clock moved back %s, resuming from %s", back, now.Format(time.RFC3339))
+			s.repeatUntil = time.Time{}
+			return nil, now
+		}
+		s.logger.Printf("clock moved back %s, running only wildcard jobs until %s", back, wallLast.Format("15:04"))
+		if wallLast.After(s.repeatUntil) {
+			s.repeatUntil = wallLast
+		}
+		first = wallNow
+	case now.Sub(lastMinute.Add(time.Minute)) > maxCatchupMinutes*time.Minute:
+		late := now.Sub(lastMinute.Add(time.Minute))
 		skipTo := now.Add(-maxCatchupMinutes * time.Minute)
-		s.logger.Printf("woke %s late, skipping catch-up to %s", now.Sub(first).Round(time.Minute), skipTo.Format(time.RFC3339))
-		first = skipTo
+		s.logger.Printf("woke %s late, skipping catch-up to %s", late.Round(time.Minute), skipTo.Format(time.RFC3339))
+		first = wallClock(skipTo)
 	}
 	var due []Job
 	for _, job := range s.jobs {
 		if job.Reboot {
 			continue
 		}
-		for minute := first; !minute.After(now); minute = minute.Add(time.Minute) {
-			if job.Schedule.Matches(minute) {
+		for minute := first; !minute.After(wallNow); minute = minute.Add(time.Minute) {
+			repeated := !minute.After(s.repeatUntil)
+			if job.Schedule.Matches(minute) && (!repeated || job.Schedule.isWildcard()) {
 				due = append(due, job)
 				break
 			}
 		}
 	}
+	if !wallNow.Before(s.repeatUntil) {
+		s.repeatUntil = time.Time{}
+	}
 	return due, now
+}
+
+// wallClock returns t's wall-clock reading as a UTC time, which walks
+// minute by minute without DST adjustments.
+func wallClock(t time.Time) time.Time {
+	return time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), 0, 0, time.UTC)
 }
 
 func (s *Scheduler) runRebootJobs(jobCtx context.Context) {

@@ -112,4 +112,8 @@ done
 
 If the scheduler wakes up late (machine asleep, heavy load), each job due during the missed window is started once (not once per missed minute), and minutes missed more than 60 minutes ago are skipped entirely.
 
-Schedules follow local wall-clock time: during daylight-saving changes, jobs inside a skipped hour do not run that day, and jobs inside a repeated hour run twice. Likewise, if the system clock is set back, scheduling resumes from the new time and the repeated minutes run again.
+Schedules follow local wall-clock time, with the same rules as Vixie cron:
+
+- When the clock jumps forward (the spring DST change), jobs inside the skipped hour run once, at the jump.
+- When the clock moves back by less than 3 hours (the autumn DST change, or setting the clock back), only jobs with a `*` in the minute or hour field (`* * * * *`, `0 * * * *`, `*/5 ...`) run again until the clock passes the time it came from. A job at a fixed time, such as `30 1 * * *`, does not run twice.
+- When the clock moves back by 3 hours or more, scheduling resumes from the new time and nothing is replayed.
