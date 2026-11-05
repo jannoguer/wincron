@@ -47,6 +47,8 @@ type Job struct {
 	MissedRun bool
 	// ACOnly skips the run while the machine is on battery (power=ac).
 	ACOnly bool
+	// Wake arms a wake timer for the job's next run (wake=yes).
+	Wake bool
 	// Retries is how many times a failed run is repeated (retry=N), each
 	// after RetryDelay.
 	Retries    int
@@ -133,6 +135,9 @@ func Parse(data []byte) ([]Job, error) {
 				if opts.MissedRun {
 					return nil, fmt.Errorf("line %d: missed= does not apply to %s", lineNo, nickname)
 				}
+				if opts.Wake {
+					return nil, fmt.Errorf("line %d: wake= does not apply to %s", lineNo, nickname)
+				}
 				job := opts.job(command, lineNo, envs)
 				job.Reboot = nickname == "@reboot"
 				job.Logon = nickname == "@logon"
@@ -198,6 +203,9 @@ func (j Job) Options() string {
 	if j.ACOnly {
 		parts = append(parts, "power=ac")
 	}
+	if j.Wake {
+		parts = append(parts, "wake=yes")
+	}
 	if j.Retries > 0 {
 		retry := fmt.Sprintf("retry=%d", j.Retries)
 		if j.RetryDelay != defaultRetryDelay {
@@ -239,6 +247,7 @@ type jobOptions struct {
 	NoOverlap bool
 	MissedRun bool
 	ACOnly    bool
+	Wake      bool
 	Retries   int
 	// RetryDelay is only meaningful with Retries > 0.
 	RetryDelay time.Duration
@@ -247,7 +256,7 @@ type jobOptions struct {
 // defaultRetryDelay is the wait between retries when retry= gives none.
 const defaultRetryDelay = time.Minute
 
-var optionKeys = []string{"user=", "timeout=", "overlap=", "missed=", "power=", "retry="}
+var optionKeys = []string{"user=", "timeout=", "overlap=", "missed=", "power=", "wake=", "retry="}
 
 func (o jobOptions) job(command string, lineNo int, envs []string) Job {
 	return Job{
@@ -259,6 +268,7 @@ func (o jobOptions) job(command string, lineNo int, envs []string) Job {
 		NoOverlap:  o.NoOverlap,
 		MissedRun:  o.MissedRun,
 		ACOnly:     o.ACOnly,
+		Wake:       o.Wake,
 		Retries:    o.Retries,
 		RetryDelay: o.RetryDelay,
 	}
@@ -300,6 +310,15 @@ func (o *jobOptions) set(key, value string, lineNo int) error {
 			o.ACOnly = false
 		default:
 			return fmt.Errorf("line %d: power= requires ac or any", lineNo)
+		}
+	case "wake=":
+		switch strings.ToLower(value) {
+		case "yes":
+			o.Wake = true
+		case "no":
+			o.Wake = false
+		default:
+			return fmt.Errorf("line %d: wake= requires yes or no", lineNo)
 		}
 	case "retry=":
 		count, delay, hasDelay := strings.Cut(value, "/")

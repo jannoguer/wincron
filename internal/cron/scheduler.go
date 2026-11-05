@@ -34,6 +34,12 @@ type Scheduler struct {
 	// jobs never run, and the scheduler says so once.
 	LogonTriggers bool
 
+	// wake is the wake timer, created when the first wake=yes job needs it;
+	// a test seam.
+	wake    waker
+	wakeAt  time.Time
+	wakeErr bool
+
 	// onBattery tells whether power=ac jobs must be skipped; a test seam.
 	onBattery func() bool
 
@@ -83,10 +89,16 @@ func (s *Scheduler) Run(ctx context.Context) {
 	s.setJobCtx(jobCtx)
 	close(s.started)
 	defer s.clearJobCtx()
+	defer func() {
+		if s.wake != nil {
+			s.wake.close()
+		}
+	}()
 	s.logger.Printf("scheduler started, %d jobs from %s", len(s.jobList()), s.crontabPath)
 	s.warnIfLogonJobsCannotRun()
 	s.runRebootJobs(jobCtx)
 	s.runMissedJobs(jobCtx, time.Now(), nil)
+	s.updateWake(time.Now())
 	lastMinute := time.Now().Truncate(time.Minute)
 	for {
 		wake := time.Now().Truncate(time.Minute).Add(time.Minute)
@@ -104,6 +116,53 @@ func (s *Scheduler) Run(ctx context.Context) {
 		s.warnIfLogonJobsCannotRun()
 		now := time.Now().Truncate(time.Minute)
 		lastMinute = s.runDueJobs(jobCtx, lastMinute, now)
+		s.updateWake(time.Now())
+	}
+}
+
+// updateWake arms the wake timer for the earliest next run of a wake=yes job
+// after now, so a sleeping machine resumes in time for it; it disarms the
+// timer when no such job remains.
+func (s *Scheduler) updateWake(now time.Time) {
+	var next time.Time
+	for _, job := range s.jobList() {
+		if !job.Wake {
+			continue
+		}
+		if t, ok := job.Schedule.Next(now); ok && (next.IsZero() || t.Before(next)) {
+			next = t
+		}
+	}
+	if next.Equal(s.wakeAt) {
+		return
+	}
+	s.wakeAt = next
+	if s.wake == nil {
+		if next.IsZero() {
+			return
+		}
+		w, err := newWakeTimer()
+		if err != nil {
+			s.warnWake(err)
+			return
+		}
+		s.wake = w
+	}
+	if next.IsZero() {
+		s.warnWake(s.wake.disarm())
+		return
+	}
+	s.warnWake(s.wake.arm(next))
+}
+
+// warnWake logs a wake timer failure once until the timer works again.
+func (s *Scheduler) warnWake(err error) {
+	switch {
+	case err == nil:
+		s.wakeErr = false
+	case !s.wakeErr:
+		s.wakeErr = true
+		s.logger.Printf("WARN wake timer: %v", err)
 	}
 }
 
@@ -302,6 +361,9 @@ func (s *Scheduler) launch(jobCtx context.Context, job Job) {
 		if job.NoOverlap {
 			defer s.release(job.key)
 		}
+		if job.Wake {
+			defer s.holdAwake(job)()
+		}
 		s.warnOnSaveError(s.state.recordStart(job, time.Now()))
 		result := s.runWithRetries(jobCtx, job)
 		s.warnOnSaveError(s.state.recordFinish(job, time.Now(), result.Summary))
@@ -309,6 +371,21 @@ func (s *Scheduler) launch(jobCtx context.Context, job Job) {
 			s.OnFailure(Failure{Job: job, Result: result.Summary, Output: result.Output})
 		}
 	}()
+}
+
+// holdAwake keeps the machine awake for a wake=yes run, retries included,
+// and returns the function that lets it sleep again.
+func (s *Scheduler) holdAwake(job Job) func() {
+	release, err := keepAwake()
+	if err != nil {
+		s.logger.Printf("WARN %s: cannot keep the machine awake: %v", job.label(), err)
+		return func() {}
+	}
+	return func() {
+		if err := release(); err != nil {
+			s.logger.Printf("WARN %s: letting the machine sleep again: %v", job.label(), err)
+		}
+	}
 }
 
 // runWithRetries runs job, and repeats it after job.RetryDelay while it
