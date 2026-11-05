@@ -34,6 +34,9 @@ type Scheduler struct {
 	// jobs never run, and the scheduler says so once.
 	LogonTriggers bool
 
+	// onBattery tells whether power=ac jobs must be skipped; a test seam.
+	onBattery func() bool
+
 	crontabPath string
 	// jobs is replaced by reloadIfChanged under jobsMu; goroutines other
 	// than the reloader read it through jobList.
@@ -64,7 +67,7 @@ type Scheduler struct {
 // NewScheduler loads the crontab and the run history kept in statePath
 // (empty keeps it in memory only).
 func NewScheduler(crontabPath, statePath string, logger *log.Logger) *Scheduler {
-	s := &Scheduler{crontabPath: crontabPath, logger: logger, running: make(map[string]bool), started: make(chan struct{}), stopping: make(chan struct{})}
+	s := &Scheduler{crontabPath: crontabPath, logger: logger, onBattery: onBattery, running: make(map[string]bool), started: make(chan struct{}), stopping: make(chan struct{})}
 	var err error
 	if s.state, err = LoadState(statePath); err != nil {
 		logger.Printf("WARN state file unreadable, starting with an empty history: %v", err)
@@ -141,6 +144,11 @@ func (s *Scheduler) missedJobs(now time.Time, due []Job) []Job {
 		since := history.FirstSeen
 		if history.LastStart.After(since) {
 			since = history.LastStart
+		}
+		// A power=ac job stays missed while on battery and runs once plugged
+		// in, instead of being retried and skipped every minute.
+		if job.ACOnly && s.onBattery() {
+			continue
 		}
 		if prev.After(since) && (!job.NoOverlap || !s.isRunning(job.key)) {
 			missed = append(missed, job)
@@ -280,6 +288,10 @@ func (s *Scheduler) runRebootJobs(jobCtx context.Context) {
 }
 
 func (s *Scheduler) launch(jobCtx context.Context, job Job) {
+	if job.ACOnly && s.onBattery() {
+		s.logger.Printf("SKIP %s: on battery power", job.label())
+		return
+	}
 	if job.NoOverlap && !s.claim(job.key) {
 		s.logger.Printf("SKIP %s: an earlier run is still going", job.label())
 		return

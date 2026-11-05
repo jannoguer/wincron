@@ -45,6 +45,8 @@ type Job struct {
 	// MissedRun makes the job run once after a period the scheduler was not
 	// running (missed=run), anacron style.
 	MissedRun bool
+	// ACOnly skips the run while the machine is on battery (power=ac).
+	ACOnly bool
 	// Retries is how many times a failed run is repeated (retry=N), each
 	// after RetryDelay.
 	Retries    int
@@ -193,6 +195,9 @@ func (j Job) Options() string {
 	if j.MissedRun {
 		parts = append(parts, "missed=run")
 	}
+	if j.ACOnly {
+		parts = append(parts, "power=ac")
+	}
 	if j.Retries > 0 {
 		retry := fmt.Sprintf("retry=%d", j.Retries)
 		if j.RetryDelay != defaultRetryDelay {
@@ -233,6 +238,7 @@ type jobOptions struct {
 	Timeout   time.Duration
 	NoOverlap bool
 	MissedRun bool
+	ACOnly    bool
 	Retries   int
 	// RetryDelay is only meaningful with Retries > 0.
 	RetryDelay time.Duration
@@ -241,7 +247,7 @@ type jobOptions struct {
 // defaultRetryDelay is the wait between retries when retry= gives none.
 const defaultRetryDelay = time.Minute
 
-var optionKeys = []string{"user=", "timeout=", "overlap=", "missed=", "retry="}
+var optionKeys = []string{"user=", "timeout=", "overlap=", "missed=", "power=", "retry="}
 
 func (o jobOptions) job(command string, lineNo int, envs []string) Job {
 	return Job{
@@ -252,6 +258,7 @@ func (o jobOptions) job(command string, lineNo int, envs []string) Job {
 		Timeout:    o.Timeout,
 		NoOverlap:  o.NoOverlap,
 		MissedRun:  o.MissedRun,
+		ACOnly:     o.ACOnly,
 		Retries:    o.Retries,
 		RetryDelay: o.RetryDelay,
 	}
@@ -284,6 +291,15 @@ func (o *jobOptions) set(key, value string, lineNo int) error {
 			o.MissedRun = false
 		default:
 			return fmt.Errorf("line %d: missed= requires run or skip", lineNo)
+		}
+	case "power=":
+		switch strings.ToLower(value) {
+		case "ac":
+			o.ACOnly = true
+		case "any":
+			o.ACOnly = false
+		default:
+			return fmt.Errorf("line %d: power= requires ac or any", lineNo)
 		}
 	case "retry=":
 		count, delay, hasDelay := strings.Cut(value, "/")

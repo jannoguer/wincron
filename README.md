@@ -104,7 +104,7 @@ A `user=` job runs on the user's own desktop, so a GUI program it starts (`notep
 
 `user=` jobs require the scheduler itself to run as `SYSTEM`, the normal service install. A foreground `wincron.exe daemon` from a regular console skips them.
 
-The tokens after the schedule are job options only while they start with `user=`, `timeout=`, `overlap=`, `missed=`, or `retry=` (case-insensitive); run a command whose first word starts with one of those through `cmd /c`. A standalone `USER=name` line is an environment assignment, not a user field. `crontab.txt` remains the privilege boundary: jobs default to `SYSTEM`, so only administrators should be able to edit the file.
+The tokens after the schedule are job options only while they start with `user=`, `timeout=`, `overlap=`, `missed=`, `power=`, or `retry=` (case-insensitive); run a command whose first word starts with one of those through `cmd /c`. A standalone `USER=name` line is an environment assignment, not a user field. `crontab.txt` remains the privilege boundary: jobs default to `SYSTEM`, so only administrators should be able to edit the file.
 
 > [!TIP]
 > `Get-LocalUser` lists the accounts on the machine.
@@ -118,6 +118,8 @@ The tokens after the schedule are job options only while they start with `user=`
 `timeout=` terminates the job and everything it spawned once the duration passes; the value needs a unit (`30s`, `5m`, `1h30m`). `overlap=no` skips a start while the previous run of the same job is still going; a job is identified by its line's text, so edits that only move it keep the tracking. Both sit with `user=` between the schedule and the command, in any order. Without them a job runs unbounded and concurrent copies are allowed.
 
 `retry=N` (or `retry=N/DELAY`, such as `retry=3/30s`; the default delay is one minute) runs a failed job again, up to `N` more times, waiting `DELAY` between attempts. A job fails when it exits non-zero or times out. The attempts count as one run: `overlap=no` keeps the job claimed through the waits, `status` shows the final result, and the event log warning is written only after the last attempt. Pending retries are dropped when the service stops.
+
+`power=ac` skips a start while the machine runs on battery and logs a `SKIP` line; a job whose time passes on battery is not made up later (apart from `missed=run`). An unknown power source counts as mains power, so desktops are unaffected. `power=any` is the default. `wincron test` ignores it.
 
 ## Logging
 
