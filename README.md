@@ -13,6 +13,7 @@ commands:
   edit       edit a copy of the crontab, install it once it validates
   load       validate a file and install it as the crontab
   log        show the end of the log, like tail (-f follows)
+  test       run a crontab line now through the service (elevated shell)
   status     show the service, the jobs, and their next and last runs
   validate   check the crontab file for errors
   daemon     run the scheduler in the foreground (like cron -f)
@@ -71,6 +72,12 @@ A job and everything it spawns are terminated as a group when it finishes, so `s
 `wincron status` works without administrator rights. It shows the service state, the paths of the crontab, log and state files, and for every job its line, schedule, user, options, next run, and last run with its result (`list` still prints the raw file, like `crontab -l`). "Next" follows the same wall-clock rules as the scheduler; a schedule that can never fire (30 February) shows `never`.
 
 The last-run history comes from `wincron-state.json` next to the executable, which the scheduler updates after every run. A job is tracked by its line's text, so moving it keeps its history, and entries for jobs removed from the crontab are dropped at the next reload.
+
+## Testing a job
+
+`wincron test N` (from an elevated shell) runs the job on crontab line `N` right now, through the running service, so it gets exactly what a scheduled run gets: the SYSTEM account or the `user=` user, the same environment and working directory, the same `timeout=`. The job's output is streamed to your console and the result is printed; the exit code is non-zero if the job failed. Use the line numbers `wincron status` shows. If the crontab changed since the service last looked, it is reloaded first.
+
+The run is logged like any other, but it does not change the run history shown by `status`, and `overlap=no` does not block it. The service listens for these requests on the named pipe `\\.\pipe\wincron`, which only SYSTEM and Administrators can open.
 
 ## Environment variables
 

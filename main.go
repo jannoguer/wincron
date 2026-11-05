@@ -73,6 +73,7 @@ func commands(p paths) []command {
 			return func(args []string) error { return load(p.crontab, args) }
 		}},
 		{"log", "[-n N] [-f]", "show the end of the log, like tail (-f follows)", logCommand(p)},
+		{"test", "<line>", "run a crontab line now through the service (elevated shell)", testCommand},
 		simple("status", "", "show the service, the jobs, and their next and last runs", func() error { return status(p) }),
 		simple("validate", "", "check the crontab file for errors", func() error { return validate(p.crontab) }),
 		simple("daemon", "", "run the scheduler in the foreground (like cron -f)", func() error { return runForeground(p) }),

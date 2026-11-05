@@ -3,6 +3,7 @@ package cron
 import (
 	"bytes"
 	"context"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -132,5 +133,53 @@ func TestOnFailureHook(t *testing.T) {
 	f := failures[0]
 	if f.Result != "exit status 3" || !strings.Contains(string(f.Output), "oops") || f.Job.Line != 1 {
 		t.Errorf("failure = %+v, want exit status 3 with its output for line 1", f)
+	}
+}
+
+func TestRunNowRunsAJobWithoutTouchingHistory(t *testing.T) {
+	var buf bytes.Buffer
+	statePath := filepath.Join(t.TempDir(), "state.json")
+	s := NewScheduler(writeCrontab(t, "# comment\n* * * * * echo from-test-run\n"), statePath, log.New(&buf, "", 0))
+	var stream bytes.Buffer
+	result, err := s.RunNow(context.Background(), 2, &stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.OK || result.Summary != "exit 0" {
+		t.Errorf("result = %+v, want exit 0", result)
+	}
+	if !strings.Contains(stream.String(), "from-test-run") {
+		t.Errorf("stream %q does not carry the job output", stream.String())
+	}
+	if !strings.Contains(buf.String(), "CMD (SYSTEM) echo from-test-run") {
+		t.Errorf("log %q does not record the run", buf.String())
+	}
+	if js, _ := s.state.Lookup(s.jobs[0]); !js.LastStart.IsZero() {
+		t.Errorf("a test run changed the history: %+v", js)
+	}
+}
+
+func TestRunNowUnknownLine(t *testing.T) {
+	s, _ := testScheduler(t, "# comment\n* * * * * echo x\n")
+	if _, err := s.RunNow(context.Background(), 1, io.Discard); err == nil || !strings.Contains(err.Error(), "no job on line 1") {
+		t.Errorf("err = %v, want no job on line 1", err)
+	}
+}
+
+func TestRunNowSeesAnEditedCrontab(t *testing.T) {
+	s, _ := testScheduler(t, "* * * * * echo old\n")
+	if err := os.WriteFile(s.crontabPath, []byte("* * * * * echo old\n* * * * * echo added\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	mtime := time.Now().Add(time.Hour)
+	if err := os.Chtimes(s.crontabPath, mtime, mtime); err != nil {
+		t.Fatal(err)
+	}
+	var stream bytes.Buffer
+	if _, err := s.RunNow(context.Background(), 2, &stream); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stream.String(), "added") {
+		t.Errorf("stream %q: the new line was not picked up", stream.String())
 	}
 }

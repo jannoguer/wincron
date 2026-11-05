@@ -3,6 +3,7 @@ package cron
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"sync"
@@ -30,7 +31,11 @@ type Scheduler struct {
 	OnFailure func(Failure)
 
 	crontabPath string
+	// jobs is replaced by reloadIfChanged under jobsMu; goroutines other
+	// than the reloader read it through jobList.
+	jobsMu      sync.RWMutex
 	jobs        []Job
+	reloadMu    sync.Mutex
 	mtime       time.Time
 	lastProblem string
 	// repeatUntil is the wall minute the clock moved back from, while it is
@@ -59,7 +64,7 @@ func (s *Scheduler) Run(ctx context.Context) {
 	jobCtx, cancelJobs := context.WithCancel(context.Background())
 	defer cancelJobs()
 
-	s.logger.Printf("scheduler started, %d jobs from %s", len(s.jobs), s.crontabPath)
+	s.logger.Printf("scheduler started, %d jobs from %s", len(s.jobList()), s.crontabPath)
 	s.runRebootJobs(jobCtx)
 	lastMinute := time.Now().Truncate(time.Minute)
 	for {
@@ -123,7 +128,7 @@ func (s *Scheduler) collectDue(lastMinute, now time.Time) ([]Job, time.Time) {
 		first = wallClock(skipTo)
 	}
 	var due []Job
-	for _, job := range s.jobs {
+	for _, job := range s.jobList() {
 		if job.Reboot {
 			continue
 		}
@@ -148,7 +153,7 @@ func wallClock(t time.Time) time.Time {
 }
 
 func (s *Scheduler) runRebootJobs(jobCtx context.Context) {
-	for _, job := range s.jobs {
+	for _, job := range s.jobList() {
 		if job.Reboot {
 			s.launch(jobCtx, job)
 		}
@@ -167,7 +172,7 @@ func (s *Scheduler) launch(jobCtx context.Context, job Job) {
 			defer s.release(job.key)
 		}
 		s.warnOnSaveError(s.state.recordStart(job, time.Now()))
-		result := runJob(jobCtx, job, s.logger)
+		result := runJob(jobCtx, job, s.logger, nil)
 		s.warnOnSaveError(s.state.recordFinish(job, time.Now(), result.Summary))
 		if !result.OK && s.OnFailure != nil {
 			s.OnFailure(Failure{Job: job, Result: result.Summary, Output: result.Output})
@@ -208,7 +213,29 @@ func (s *Scheduler) shutdown(cancelJobs context.CancelFunc) {
 	s.logger.Print("scheduler stopped")
 }
 
+func (s *Scheduler) jobList() []Job {
+	s.jobsMu.RLock()
+	defer s.jobsMu.RUnlock()
+	return s.jobs
+}
+
+// RunNow runs the job on crontab line now, as the scheduler would, after
+// picking up a changed crontab. Output is also copied to stream. The run is
+// logged but changes neither the run history nor overlap tracking, and it
+// ends when ctx does.
+func (s *Scheduler) RunNow(ctx context.Context, line int, stream io.Writer) (RunResult, error) {
+	s.reloadIfChanged()
+	for _, job := range s.jobList() {
+		if job.Line == line {
+			return runJob(ctx, job, s.logger, stream), nil
+		}
+	}
+	return RunResult{}, fmt.Errorf("no job on line %d of %s", line, s.crontabPath)
+}
+
 func (s *Scheduler) reloadIfChanged() {
+	s.reloadMu.Lock()
+	defer s.reloadMu.Unlock()
 	info, err := os.Stat(s.crontabPath)
 	if err != nil {
 		if !s.mtime.IsZero() {
@@ -227,7 +254,9 @@ func (s *Scheduler) reloadIfChanged() {
 		s.logProblem("crontab reload failed, keeping %d jobs: %v", len(s.jobs), err)
 		return
 	}
+	s.jobsMu.Lock()
 	s.jobs = jobs
+	s.jobsMu.Unlock()
 	if s.state.sync(jobs, time.Now()) {
 		s.warnOnSaveError(s.state.save())
 	}

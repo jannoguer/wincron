@@ -49,7 +49,7 @@ func TestCappedBufferPartialChunk(t *testing.T) {
 func runTestJob(t *testing.T, ctx context.Context, job Job) string {
 	t.Helper()
 	var buf bytes.Buffer
-	runJob(ctx, job, log.New(&buf, "", 0))
+	runJob(ctx, job, log.New(&buf, "", 0), nil)
 	return buf.String()
 }
 

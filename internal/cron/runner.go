@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -22,6 +23,15 @@ const maxJobOutputBytes = 64 << 10
 // cmd.exe, and the wait for an unresponsive process after cancellation.
 // Without it, Wait blocks until every inherited pipe handle is closed.
 const pipeWaitDelay = 5 * time.Second
+
+// tolerantWriter discards write errors, so a stream that went away (a closed
+// pipe) cannot stall the job's output copy.
+type tolerantWriter struct{ w io.Writer }
+
+func (t tolerantWriter) Write(p []byte) (int, error) {
+	_, _ = t.w.Write(p)
+	return len(p), nil
+}
 
 type cappedBuffer struct {
 	buf   []byte
@@ -51,14 +61,16 @@ func (j Job) label() string {
 	return "(" + account + ") " + j.Command
 }
 
-// runResult is the outcome of one run.
-type runResult struct {
+// RunResult is the outcome of one run.
+type RunResult struct {
 	OK      bool
 	Summary string // "exit 0", "exit status 7", "timed out after 1m0s", or why it did not run
 	Output  []byte // what the job wrote, as UTF-8, capped at maxJobOutputBytes
 }
 
-func runJob(ctx context.Context, job Job, logger *log.Logger) runResult {
+// runJob runs job to completion and logs it. A non-nil stream also receives
+// the output as it is written; a failing stream does not stop the job.
+func runJob(ctx context.Context, job Job, logger *log.Logger, stream io.Writer) RunResult {
 	if job.Timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, job.Timeout)
@@ -77,7 +89,7 @@ func runJob(ctx context.Context, job Job, logger *log.Logger) runResult {
 		token, env, err := userContext(job.User)
 		if err != nil {
 			logger.Printf("SKIP %s: %v", job.label(), err)
-			return runResult{Summary: "skipped: " + err.Error()}
+			return RunResult{Summary: "skipped: " + err.Error()}
 		}
 		defer func() { _ = token.Close() }()
 		cmd.SysProcAttr.Token = syscall.Token(token)
@@ -101,8 +113,12 @@ func runJob(ctx context.Context, job Job, logger *log.Logger) runResult {
 	}
 
 	out := cappedBuffer{max: maxJobOutputBytes}
-	cmd.Stdout = &out
-	cmd.Stderr = &out
+	var sink io.Writer = &out
+	if stream != nil {
+		sink = io.MultiWriter(&out, tolerantWriter{stream})
+	}
+	cmd.Stdout = sink
+	cmd.Stderr = sink
 
 	// A job object tracks the whole process tree: cancellation terminates it,
 	// and kill-on-close reaps survivors when the deferred CloseHandle runs
@@ -154,13 +170,13 @@ func runJob(ctx context.Context, job Job, logger *log.Logger) runResult {
 	if err != nil {
 		if job.Timeout > 0 && errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			logger.Printf("END %s: timed out after %s", job.label(), job.Timeout)
-			return runResult{Summary: "timed out after " + job.Timeout.String(), Output: output}
+			return RunResult{Summary: "timed out after " + job.Timeout.String(), Output: output}
 		}
 		logger.Printf("END %s: %v (%s)", job.label(), err, duration)
-		return runResult{Summary: err.Error(), Output: output}
+		return RunResult{Summary: err.Error(), Output: output}
 	}
 	logger.Printf("END %s: exit 0 (%s)", job.label(), duration)
-	return runResult{OK: true, Summary: "exit 0", Output: output}
+	return RunResult{OK: true, Summary: "exit 0", Output: output}
 }
 
 // setKillOnClose configures the job object to terminate every process it

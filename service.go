@@ -22,6 +22,8 @@ const serviceName = "wincron"
 
 type cronService struct {
 	crontabPath, logPath, statePath string
+	// pipeName, if set, is where "wincron test" requests are served.
+	pipeName string
 }
 
 // startStopWaitHintMillis tells SCM how long a pending start or stop may
@@ -103,6 +105,18 @@ func (s *cronService) Execute(args []string, requests <-chan svc.ChangeRequest, 
 		scheduler.Run(ctx)
 		close(done)
 	}()
+	pipeDone := make(chan struct{})
+	if s.pipeName == "" {
+		close(pipeDone)
+	} else {
+		pipe := &pipeServer{name: s.pipeName, sddl: pipeSDDL, run: scheduler.RunNow, logger: logger}
+		go func() {
+			defer close(pipeDone)
+			if err := pipe.serve(ctx); err != nil {
+				logger.Printf("WARN test pipe unavailable, wincron test will not work: %v", err)
+			}
+		}()
+	}
 
 	status <- svc.Status{State: svc.Running, Accepts: svc.AcceptStop | svc.AcceptShutdown | svc.AcceptPreShutdown}
 	for req := range requests {
@@ -114,16 +128,18 @@ func (s *cronService) Execute(args []string, requests <-chan svc.ChangeRequest, 
 			status <- svc.Status{State: svc.StopPending, WaitHint: startStopWaitHintMillis}
 			cancel()
 			<-done
+			<-pipeDone
 			return false, 0
 		}
 	}
 	cancel()
 	<-done
+	<-pipeDone
 	return false, 0
 }
 
 func runService(p paths) error {
-	return svc.Run(serviceName, &cronService{crontabPath: p.crontab, logPath: p.log, statePath: p.state})
+	return svc.Run(serviceName, &cronService{crontabPath: p.crontab, logPath: p.log, statePath: p.state, pipeName: pipeName})
 }
 
 func connectManager() (*mgr.Mgr, error) {
