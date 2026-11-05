@@ -17,7 +17,18 @@ const maxCatchupMinutes = 60
 // DST-style repeat rather than a reset.
 const maxClockBack = 3 * time.Hour
 
+// Failure describes a run that failed, timed out or could not start.
+type Failure struct {
+	Job    Job
+	Result string
+	Output []byte
+}
+
 type Scheduler struct {
+	// OnFailure, if set before Run, is called after each failed run, from the
+	// goroutine that ran the job. An overlap=no skip is not a failure.
+	OnFailure func(Failure)
+
 	crontabPath string
 	jobs        []Job
 	mtime       time.Time
@@ -158,6 +169,9 @@ func (s *Scheduler) launch(jobCtx context.Context, job Job) {
 		s.warnOnSaveError(s.state.recordStart(job, time.Now()))
 		result := runJob(jobCtx, job, s.logger)
 		s.warnOnSaveError(s.state.recordFinish(job, time.Now(), result.Summary))
+		if !result.OK && s.OnFailure != nil {
+			s.OnFailure(Failure{Job: job, Result: result.Summary, Output: result.Output})
+		}
 	}()
 }
 

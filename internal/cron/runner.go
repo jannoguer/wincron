@@ -55,6 +55,7 @@ func (j Job) label() string {
 type runResult struct {
 	OK      bool
 	Summary string // "exit 0", "exit status 7", "timed out after 1m0s", or why it did not run
+	Output  []byte // what the job wrote, as UTF-8, capped at maxJobOutputBytes
 }
 
 func runJob(ctx context.Context, job Job, logger *log.Logger) runResult {
@@ -138,12 +139,14 @@ func runJob(ctx context.Context, job Job, logger *log.Logger) runResult {
 	}
 	duration := time.Since(started).Round(time.Millisecond)
 
+	var output []byte
 	if len(out.buf) > 0 {
 		truncated := out.total > int64(len(out.buf))
 		if truncated {
 			out.buf = trimPartialRune(out.buf)
 		}
-		logger.Printf("OUT %s:\n%s", job.label(), decodeOutput(out.buf))
+		output = decodeOutput(out.buf)
+		logger.Printf("OUT %s:\n%s", job.label(), output)
 		if truncated {
 			logger.Printf("OUT %s: truncated, %d of %d bytes shown", job.label(), len(out.buf), out.total)
 		}
@@ -151,13 +154,13 @@ func runJob(ctx context.Context, job Job, logger *log.Logger) runResult {
 	if err != nil {
 		if job.Timeout > 0 && errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			logger.Printf("END %s: timed out after %s", job.label(), job.Timeout)
-			return runResult{Summary: "timed out after " + job.Timeout.String()}
+			return runResult{Summary: "timed out after " + job.Timeout.String(), Output: output}
 		}
 		logger.Printf("END %s: %v (%s)", job.label(), err, duration)
-		return runResult{Summary: err.Error()}
+		return runResult{Summary: err.Error(), Output: output}
 	}
 	logger.Printf("END %s: exit 0 (%s)", job.label(), duration)
-	return runResult{OK: true, Summary: "exit 0"}
+	return runResult{OK: true, Summary: "exit 0", Output: output}
 }
 
 // setKillOnClose configures the job object to terminate every process it

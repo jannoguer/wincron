@@ -12,6 +12,7 @@ commands:
   list       print jobs from the crontab file
   edit       edit a copy of the crontab, install it once it validates
   load       validate a file and install it as the crontab
+  log        show the end of the log, like tail (-f follows)
   status     show the service, the jobs, and their next and last runs
   validate   check the crontab file for errors
   daemon     run the scheduler in the foreground (like cron -f)
@@ -113,7 +114,9 @@ done
 2026/07/16 05:00:02 END (SYSTEM) backup.exe: exit 0 (2s)
 ```
 
-`SKIP` lines report runs that did not start (an earlier run still going, or a `user=` job whose user is not logged in), and `WARN` lines report trouble setting up a run. Job starts, captured output (up to 64 KB per run), and exit statuses are written to `wincron.log` next to the executable (mirrored to stdout with `daemon`), or to the absolute path in the `WINCRON_LOG` environment variable (set machine-wide for the service). The log rotates at 10 MB, keeping one previous file as `wincron.log.1`. Job output that is not valid UTF-8 is converted from the console's OEM code page, so accented text stays readable. If the service fails before the log file is usable, the error is reported to the Windows event log under the `wincron` source.
+`SKIP` lines report runs that did not start (an earlier run still going, or a `user=` job whose user is not logged in), and `WARN` lines report trouble setting up a run. Job starts, captured output (up to 64 KB per run), and exit statuses are written to `wincron.log` next to the executable (mirrored to stdout with `daemon`), or to the absolute path in the `WINCRON_LOG` environment variable (set machine-wide for the service). The log rotates at 10 MB, keeping one previous file as `wincron.log.1`. Job output that is not valid UTF-8 is converted from the console's OEM code page, so accented text stays readable. `wincron log` prints the end of that file (`-n N` lines, default 10) and `wincron log -f` follows it across rotation, like `tail -f`; it reads the same path as the service, honouring `WINCRON_LOG`.
+
+When the service runs a job that exits non-zero, times out, or is skipped because its `user=` is not logged in, it also writes a Warning to the Windows event log under the `wincron` source, with the command, the result and the tail of its output (view it in Event Viewer under Windows Logs > Application). A skip caused by `overlap=no` is not reported, since it is the option working as intended. If the service fails before the log file is usable, the error is reported to the same event log source.
 
 ## Missed minutes and clock changes
 

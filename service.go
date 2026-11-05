@@ -1,12 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/svc"
@@ -26,7 +28,42 @@ type cronService struct {
 // take; it must exceed jobShutdownGrace or a graceful stop looks hung.
 const startStopWaitHintMillis = 30000
 
-const eventIDFatal = 1
+const (
+	eventIDFatal     = 1
+	eventIDJobFailed = 2
+)
+
+// maxEventOutputBytes bounds the job output copied into an event.
+const maxEventOutputBytes = 2000
+
+// formatFailure renders a failed run as an event log message.
+func formatFailure(f cron.Failure) string {
+	user := f.Job.User
+	if user == "" {
+		user = "SYSTEM"
+	}
+	msg := fmt.Sprintf("wincron job failed: %s\nuser: %s\nresult: %s", f.Job.Command, user, f.Result)
+	if len(f.Output) > 0 {
+		msg += fmt.Sprintf("\n\noutput (last %d bytes at most):\n%s", maxEventOutputBytes, tailBytes(f.Output, maxEventOutputBytes))
+	}
+	return msg
+}
+
+// tailBytes returns at most the last n bytes of s, starting at a character
+// boundary and, when it has to cut, at a line start.
+func tailBytes(s []byte, n int) []byte {
+	if len(s) <= n {
+		return s
+	}
+	s = s[len(s)-n:]
+	for len(s) > 0 && !utf8.RuneStart(s[0]) {
+		s = s[1:]
+	}
+	if i := bytes.IndexByte(s, '\n'); i >= 0 && i+1 < len(s) {
+		return s[i+1:]
+	}
+	return s
+}
 
 // reportFatalToEventLog best-effort reports err to the Windows event log,
 // the only visible trace when the service fails before wincron.log is usable.
@@ -48,10 +85,22 @@ func (s *cronService) Execute(args []string, requests <-chan svc.ChangeRequest, 
 	}
 	defer func() { _ = closer.Close() }()
 
+	scheduler := cron.NewScheduler(s.crontabPath, s.statePath, logger)
+	if elog, err := eventlog.Open(serviceName); err != nil {
+		logger.Printf("WARN event log unavailable, failed jobs are only logged to the file: %v", err)
+	} else {
+		defer func() { _ = elog.Close() }()
+		scheduler.OnFailure = func(f cron.Failure) {
+			if err := elog.Warning(eventIDJobFailed, formatFailure(f)); err != nil {
+				logger.Printf("WARN cannot write to the event log: %v", err)
+			}
+		}
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		cron.NewScheduler(s.crontabPath, s.statePath, logger).Run(ctx)
+		scheduler.Run(ctx)
 		close(done)
 	}()
 

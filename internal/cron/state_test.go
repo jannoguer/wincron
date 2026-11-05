@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -107,5 +108,29 @@ func TestSchedulerRecordsRunInState(t *testing.T) {
 	}
 	if strings.Contains(buf.String(), "WARN") {
 		t.Errorf("log %q has a warning", buf.String())
+	}
+}
+
+func TestOnFailureHook(t *testing.T) {
+	var buf bytes.Buffer
+	s := NewScheduler(writeCrontab(t, "* * * * * echo oops& exit 3\n* * * * * echo fine\n"), "", log.New(&buf, "", 0))
+	var failures []Failure
+	var mu sync.Mutex
+	s.OnFailure = func(f Failure) {
+		mu.Lock()
+		defer mu.Unlock()
+		failures = append(failures, f)
+	}
+	for _, job := range s.jobs {
+		s.launch(context.Background(), job)
+	}
+	s.wg.Wait()
+
+	if len(failures) != 1 {
+		t.Fatalf("got %d failures, want 1 (only the failing job)", len(failures))
+	}
+	f := failures[0]
+	if f.Result != "exit status 3" || !strings.Contains(string(f.Output), "oops") || f.Job.Line != 1 {
+		t.Errorf("failure = %+v, want exit status 3 with its output for line 1", f)
 	}
 }

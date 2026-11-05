@@ -3,10 +3,14 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"golang.org/x/sys/windows/svc"
+
+	"wincron/internal/cron"
 )
 
 func waitForRunning(t *testing.T, status <-chan svc.Status) svc.Status {
@@ -68,5 +72,32 @@ func TestServiceStopsOnEveryStopCommand(t *testing.T) {
 				t.Fatalf("service did not stop on %s", name)
 			}
 		})
+	}
+}
+
+func TestFormatFailure(t *testing.T) {
+	f := cron.Failure{Job: cron.Job{Command: "backup.exe", User: "jan"}, Result: "exit status 7", Output: []byte("disk full\n")}
+	got := formatFailure(f)
+	for _, want := range []string{"backup.exe", "user: jan", "result: exit status 7", "disk full"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("message %q does not contain %q", got, want)
+		}
+	}
+	if got := formatFailure(cron.Failure{Job: cron.Job{Command: "x"}, Result: "timed out"}); !strings.Contains(got, "user: SYSTEM") || strings.Contains(got, "output") {
+		t.Errorf("message %q: want SYSTEM and no output section", got)
+	}
+}
+
+func TestTailBytes(t *testing.T) {
+	long := []byte("first line\nsecond line\nthird line\n")
+	if got := string(tailBytes(long, 1000)); got != string(long) {
+		t.Errorf("short input changed: %q", got)
+	}
+	if got := string(tailBytes(long, 20)); got != "third line\n" {
+		t.Errorf("tailBytes cut = %q, want to start at a line", got)
+	}
+	multibyte := []byte("aaa\u00e9\u00e9\u00e9")
+	if got := tailBytes(multibyte, 3); !utf8.Valid(got) {
+		t.Errorf("tailBytes split a character: %q", got)
 	}
 }
