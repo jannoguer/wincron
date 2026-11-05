@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -44,6 +45,10 @@ type Job struct {
 	// MissedRun makes the job run once after a period the scheduler was not
 	// running (missed=run), anacron style.
 	MissedRun bool
+	// Retries is how many times a failed run is repeated (retry=N), each
+	// after RetryDelay.
+	Retries    int
+	RetryDelay time.Duration
 	// key is the line text plus its occurrence count, stable when an edit
 	// shifts line numbers.
 	key string
@@ -188,6 +193,13 @@ func (j Job) Options() string {
 	if j.MissedRun {
 		parts = append(parts, "missed=run")
 	}
+	if j.Retries > 0 {
+		retry := fmt.Sprintf("retry=%d", j.Retries)
+		if j.RetryDelay != defaultRetryDelay {
+			retry += "/" + j.RetryDelay.String()
+		}
+		parts = append(parts, retry)
+	}
 	return strings.Join(parts, " ")
 }
 
@@ -221,19 +233,27 @@ type jobOptions struct {
 	Timeout   time.Duration
 	NoOverlap bool
 	MissedRun bool
+	Retries   int
+	// RetryDelay is only meaningful with Retries > 0.
+	RetryDelay time.Duration
 }
 
-var optionKeys = []string{"user=", "timeout=", "overlap=", "missed="}
+// defaultRetryDelay is the wait between retries when retry= gives none.
+const defaultRetryDelay = time.Minute
+
+var optionKeys = []string{"user=", "timeout=", "overlap=", "missed=", "retry="}
 
 func (o jobOptions) job(command string, lineNo int, envs []string) Job {
 	return Job{
-		Command:   command,
-		Line:      lineNo,
-		Envs:      snapshot(envs),
-		User:      o.User,
-		Timeout:   o.Timeout,
-		NoOverlap: o.NoOverlap,
-		MissedRun: o.MissedRun,
+		Command:    command,
+		Line:       lineNo,
+		Envs:       snapshot(envs),
+		User:       o.User,
+		Timeout:    o.Timeout,
+		NoOverlap:  o.NoOverlap,
+		MissedRun:  o.MissedRun,
+		Retries:    o.Retries,
+		RetryDelay: o.RetryDelay,
 	}
 }
 
@@ -264,6 +284,20 @@ func (o *jobOptions) set(key, value string, lineNo int) error {
 			o.MissedRun = false
 		default:
 			return fmt.Errorf("line %d: missed= requires run or skip", lineNo)
+		}
+	case "retry=":
+		count, delay, hasDelay := strings.Cut(value, "/")
+		n, err := strconv.Atoi(count)
+		if err != nil || n < 1 {
+			return fmt.Errorf("line %d: retry= requires a count of at least 1, as retry=3 or retry=3/30s", lineNo)
+		}
+		o.Retries, o.RetryDelay = n, defaultRetryDelay
+		if hasDelay {
+			d, err := time.ParseDuration(delay)
+			if err != nil || d <= 0 {
+				return fmt.Errorf("line %d: retry= requires a positive delay such as 30s or 5m", lineNo)
+			}
+			o.RetryDelay = d
 		}
 	}
 	return nil

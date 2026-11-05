@@ -44,8 +44,11 @@ type Scheduler struct {
 	// between starting and shutting down. Guarded by mu.
 	jobCtx      context.Context
 	warnedLogon bool
-	// started is closed once Run accepts RunLogon.
+	// started is closed once Run accepts RunLogon; stopping when shutdown
+	// begins.
 	started     chan struct{}
+	stopping    chan struct{}
+	stopOnce    sync.Once
 	mtime       time.Time
 	lastProblem string
 	// repeatUntil is the wall minute the clock moved back from, while it is
@@ -61,7 +64,7 @@ type Scheduler struct {
 // NewScheduler loads the crontab and the run history kept in statePath
 // (empty keeps it in memory only).
 func NewScheduler(crontabPath, statePath string, logger *log.Logger) *Scheduler {
-	s := &Scheduler{crontabPath: crontabPath, logger: logger, running: make(map[string]bool), started: make(chan struct{})}
+	s := &Scheduler{crontabPath: crontabPath, logger: logger, running: make(map[string]bool), started: make(chan struct{}), stopping: make(chan struct{})}
 	var err error
 	if s.state, err = LoadState(statePath); err != nil {
 		logger.Printf("WARN state file unreadable, starting with an empty history: %v", err)
@@ -89,6 +92,7 @@ func (s *Scheduler) Run(ctx context.Context) {
 		case <-ctx.Done():
 			timer.Stop()
 			s.clearJobCtx()
+			s.beginStop()
 			s.shutdown(cancelJobs)
 			return
 		case <-timer.C:
@@ -218,6 +222,11 @@ func (s *Scheduler) setJobCtx(ctx context.Context) {
 	s.jobCtx = ctx
 }
 
+// beginStop tells retrying jobs to give up.
+func (s *Scheduler) beginStop() {
+	s.stopOnce.Do(func() { close(s.stopping) })
+}
+
 func (s *Scheduler) clearJobCtx() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -282,12 +291,36 @@ func (s *Scheduler) launch(jobCtx context.Context, job Job) {
 			defer s.release(job.key)
 		}
 		s.warnOnSaveError(s.state.recordStart(job, time.Now()))
-		result := runJob(jobCtx, job, s.logger, nil)
+		result := s.runWithRetries(jobCtx, job)
 		s.warnOnSaveError(s.state.recordFinish(job, time.Now(), result.Summary))
 		if !result.OK && s.OnFailure != nil {
 			s.OnFailure(Failure{Job: job, Result: result.Summary, Output: result.Output})
 		}
 	}()
+}
+
+// runWithRetries runs job, and repeats it after job.RetryDelay while it
+// fails, up to job.Retries times. Retries stop at shutdown, even though a
+// running attempt gets the shutdown grace.
+func (s *Scheduler) runWithRetries(jobCtx context.Context, job Job) RunResult {
+	result := runJob(jobCtx, job, s.logger, nil)
+	for attempt := 1; !result.OK && attempt <= job.Retries && jobCtx.Err() == nil; attempt++ {
+		s.logger.Printf("RETRY %s: attempt %d of %d in %s after: %s", job.label(), attempt, job.Retries, job.RetryDelay, result.Summary)
+		select {
+		case <-time.After(job.RetryDelay):
+		case <-s.stopping:
+			return result
+		case <-jobCtx.Done():
+			return result
+		}
+		select {
+		case <-s.stopping:
+			return result
+		default:
+		}
+		result = runJob(jobCtx, job, s.logger, nil)
+	}
+	return result
 }
 
 // claim marks a job as running and reports whether it was free to start.
