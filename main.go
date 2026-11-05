@@ -55,7 +55,7 @@ func commands(exePath, crontabPath, logPath string) []command {
 			return func(args []string) error { return load(crontabPath, args) }
 		}},
 		simple("validate", "", "check the crontab file for errors", func() error { return validate(crontabPath) }),
-		simple("run", "", "run the scheduler in the foreground", func() error { return runForeground(crontabPath, logPath) }),
+		simple("daemon", "", "run the scheduler in the foreground (like cron -f)", func() error { return runForeground(crontabPath, logPath) }),
 		simple("install", "", "install to Program Files, add to PATH, start the service", func() error { return install(exePath) }),
 		simple("uninstall", "", "remove the service, PATH entry and files (keeps crontab.txt)", func() error { return uninstall(exePath) }),
 		simple("start", "", "start the service", startService),

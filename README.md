@@ -13,7 +13,7 @@ commands:
   edit       edit a copy of the crontab, install it once it validates
   load       validate a file and install it as the crontab
   validate   check the crontab file for errors
-  run        run the scheduler in the foreground
+  daemon     run the scheduler in the foreground (like cron -f)
   install    install to Program Files, add to PATH, start the service
   uninstall  remove the service, PATH entry and files (keeps crontab.txt)
   start      start the service
@@ -24,7 +24,7 @@ commands:
 Run 'wincron <command> -h' for the details of one command.
 ```
 
-The service commands need an elevated shell. `run` runs the scheduler in the current console (Ctrl+C to stop) and mirrors the log to stdout.
+The service commands need an elevated shell. `daemon` runs the scheduler in the current console, like `cron -f` (Ctrl+C to stop), and mirrors the log to stdout.
 
 ## Install and uninstall
 
@@ -50,7 +50,7 @@ A step on a bare value runs to the end of the field (`5/3` = 5, 8, ..., 59).
 
 When both day-of-month and day-of-week are restricted, a day matching either one runs the job (`0 0 13 * 5` = every 13th and every Friday). As in standard cron, a field starting with `*`, such as `*/2`, counts as unrestricted, so `0 0 */2 * 1` runs only on Mondays that fall on odd days.
 
-`@reboot` runs once each time the scheduler starts (boot, service restart, or foreground `run`), not when the crontab is edited.
+`@reboot` runs once each time the scheduler starts (boot, service restart, or foreground `daemon`), not when the crontab is edited.
 
 ## The crontab file
 
@@ -80,7 +80,7 @@ Names must match `[A-Za-z_][A-Za-z0-9_]*`; whitespace around the name and value 
 > [!IMPORTANT]
 > The user must already be logged in when the job triggers, otherwise the run is skipped and logged. A disconnected session (fast user switching, a dropped remote session) counts as logged in; an active session is preferred.
 
-`user=` jobs require the scheduler itself to run as `SYSTEM`, the normal service install. A foreground `wincron.exe run` from a regular console skips them.
+`user=` jobs require the scheduler itself to run as `SYSTEM`, the normal service install. A foreground `wincron.exe daemon` from a regular console skips them.
 
 The tokens after the schedule are job options only while they start with `user=`, `timeout=`, or `overlap=` (case-insensitive); run a command whose first word starts with one of those through `cmd /c`. A standalone `USER=name` line is an environment assignment, not a user field. `crontab.txt` remains the privilege boundary: jobs default to `SYSTEM`, so only administrators should be able to edit the file.
 
@@ -97,7 +97,7 @@ The tokens after the schedule are job options only while they start with `user=`
 
 ## Logging
 
-Job starts, captured output (up to 64 KB per run), and exit statuses are written to `wincron.log` next to the executable (mirrored to stdout with `run`), or to the absolute path in the `WINCRON_LOG` environment variable (set machine-wide for the service). The log rotates at 10 MB, keeping one previous file as `wincron.log.1`. Job output that is not valid UTF-8 is converted from the console's OEM code page, so accented text stays readable. If the service fails before the log file is usable, the error is reported to the Windows event log under the `wincron` source.
+Job starts, captured output (up to 64 KB per run), and exit statuses are written to `wincron.log` next to the executable (mirrored to stdout with `daemon`), or to the absolute path in the `WINCRON_LOG` environment variable (set machine-wide for the service). The log rotates at 10 MB, keeping one previous file as `wincron.log.1`. Job output that is not valid UTF-8 is converted from the console's OEM code page, so accented text stays readable. If the service fails before the log file is usable, the error is reported to the Windows event log under the `wincron` source.
 
 ## Missed minutes and clock changes
 
