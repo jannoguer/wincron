@@ -51,7 +51,13 @@ func (j Job) label() string {
 	return "(" + account + ") " + j.Command
 }
 
-func runJob(ctx context.Context, job Job, logger *log.Logger) {
+// runResult is the outcome of one run.
+type runResult struct {
+	OK      bool
+	Summary string // "exit 0", "exit status 7", "timed out after 1m0s", or why it did not run
+}
+
+func runJob(ctx context.Context, job Job, logger *log.Logger) runResult {
 	if job.Timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, job.Timeout)
@@ -70,7 +76,7 @@ func runJob(ctx context.Context, job Job, logger *log.Logger) {
 		token, env, err := userContext(job.User)
 		if err != nil {
 			logger.Printf("SKIP %s: %v", job.label(), err)
-			return
+			return runResult{Summary: "skipped: " + err.Error()}
 		}
 		defer func() { _ = token.Close() }()
 		cmd.SysProcAttr.Token = syscall.Token(token)
@@ -145,12 +151,13 @@ func runJob(ctx context.Context, job Job, logger *log.Logger) {
 	if err != nil {
 		if job.Timeout > 0 && errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			logger.Printf("END %s: timed out after %s", job.label(), job.Timeout)
-			return
+			return runResult{Summary: "timed out after " + job.Timeout.String()}
 		}
 		logger.Printf("END %s: %v (%s)", job.label(), err, duration)
-		return
+		return runResult{Summary: err.Error()}
 	}
 	logger.Printf("END %s: exit 0 (%s)", job.label(), duration)
+	return runResult{OK: true, Summary: "exit 0"}
 }
 
 // setKillOnClose configures the job object to terminate every process it

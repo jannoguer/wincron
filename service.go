@@ -19,7 +19,7 @@ import (
 const serviceName = "wincron"
 
 type cronService struct {
-	crontabPath, logPath string
+	crontabPath, logPath, statePath string
 }
 
 // startStopWaitHintMillis tells SCM how long a pending start or stop may
@@ -51,7 +51,7 @@ func (s *cronService) Execute(args []string, requests <-chan svc.ChangeRequest, 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		cron.NewScheduler(s.crontabPath, logger).Run(ctx)
+		cron.NewScheduler(s.crontabPath, s.statePath, logger).Run(ctx)
 		close(done)
 	}()
 
@@ -73,8 +73,8 @@ func (s *cronService) Execute(args []string, requests <-chan svc.ChangeRequest, 
 	return false, 0
 }
 
-func runService(crontabPath, logPath string) error {
-	return svc.Run(serviceName, &cronService{crontabPath: crontabPath, logPath: logPath})
+func runService(p paths) error {
+	return svc.Run(serviceName, &cronService{crontabPath: p.crontab, logPath: p.log, statePath: p.state})
 }
 
 func connectManager() (*mgr.Mgr, error) {

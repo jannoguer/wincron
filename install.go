@@ -191,7 +191,7 @@ func uninstall(exePath string) error {
 
 // ownFiles are the files wincron creates next to its executable, other than
 // the executable and crontab.txt.
-var ownFiles = []string{"wincron.log", "wincron.log.1", "uninstall.bat"}
+var ownFiles = []string{"wincron.log", "wincron.log.1", "wincron-state.json", "uninstall.bat"}
 
 func removeOwnFiles(dir string) error {
 	for _, name := range ownFiles {

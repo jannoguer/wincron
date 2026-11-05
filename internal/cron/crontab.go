@@ -28,7 +28,9 @@ var scheduleNicknames = map[string]string{
 }
 
 type Job struct {
-	Schedule  Schedule
+	Schedule Schedule
+	// Spec is the schedule as written: five fields or a nickname.
+	Spec      string
 	Command   string
 	Line      int
 	Reboot    bool
@@ -117,6 +119,7 @@ func Parse(data []byte) ([]Job, error) {
 				}
 				job := opts.job(command, lineNo, envs)
 				job.Reboot = true
+				job.Spec = "@reboot"
 				add(job, line)
 				continue
 			}
@@ -132,6 +135,7 @@ func Parse(data []byte) ([]Job, error) {
 			if err != nil {
 				return nil, err
 			}
+			job.Spec = fields[0]
 			add(job, line)
 			continue
 		}
@@ -146,12 +150,28 @@ func Parse(data []byte) ([]Job, error) {
 		if err != nil {
 			return nil, err
 		}
+		job.Spec = strings.Join(fields[:scheduleFieldCount], " ")
 		add(job, line)
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
 	return jobs, nil
+}
+
+// Options returns the job's key=value options as written in the crontab.
+func (j Job) Options() string {
+	var parts []string
+	if j.User != "" {
+		parts = append(parts, "user="+j.User)
+	}
+	if j.Timeout > 0 {
+		parts = append(parts, "timeout="+j.Timeout.String())
+	}
+	if j.NoOverlap {
+		parts = append(parts, "overlap=no")
+	}
+	return strings.Join(parts, " ")
 }
 
 // buildScheduledJob parses the optional job options and command after the

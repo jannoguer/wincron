@@ -12,6 +12,7 @@ commands:
   list       print jobs from the crontab file
   edit       edit a copy of the crontab, install it once it validates
   load       validate a file and install it as the crontab
+  status     show the service, the jobs, and their next and last runs
   validate   check the crontab file for errors
   daemon     run the scheduler in the foreground (like cron -f)
   install    install to Program Files, add to PATH, start the service
@@ -32,7 +33,7 @@ From an elevated shell, run `wincron.exe install` (on Windows 11, `sudo wincron.
 
 Running `install` again upgrades in place: it stops the service, replaces the executable, and starts it again; `crontab.txt` is kept. `install.bat` is a thin wrapper that elevates, builds `wincron.exe` if it is not present (requires Go; otherwise use a release zip), asks before upgrading an existing install, and calls `wincron.exe install`.
 
-`wincron uninstall` (elevated) stops and removes the service, the event source and the `PATH` entry, and deletes the executable and the log files. `crontab.txt` is kept, so the directory stays until you delete it; a later install picks the jobs up again.
+`wincron uninstall` (elevated) stops and removes the service, the event source and the `PATH` entry, and deletes the executable, the log files and the state file. `crontab.txt` is kept, so the directory stays until you delete it; a later install picks the jobs up again.
 
 ## Schedule syntax
 
@@ -63,6 +64,12 @@ The file may be UTF-8 (with or without a BOM) or UTF-16 with a BOM, as Notepad a
 Commands run with `cmd.exe /C`: pipes, redirection, `&&`, and batch files all work. Unlike classic cron, `%` is not special, so `%VAR%` expands as usual. Jobs start in the profile directory of the account that runs them (`C:\Windows\System32\config\systemprofile` for SYSTEM, the user's profile for `user=`), like cron's `HOME`; use absolute paths anyway.
 
 A job and everything it spawns are terminated as a group when it finishes, so `start /b foo.exe` leaves nothing behind; design jobs to run to completion, not to detach long-lived processes. On service stop, running jobs get 20 seconds to finish before being terminated.
+
+## Status
+
+`wincron status` works without administrator rights. It shows the service state, the paths of the crontab, log and state files, and for every job its line, schedule, user, options, next run, and last run with its result (`list` still prints the raw file, like `crontab -l`). "Next" follows the same wall-clock rules as the scheduler; a schedule that can never fire (30 February) shows `never`.
+
+The last-run history comes from `wincron-state.json` next to the executable, which the scheduler updates after every run. A job is tracked by its line's text, so moving it keeps its history, and entries for jobs removed from the crontab are dropped at the next reload.
 
 ## Environment variables
 

@@ -26,13 +26,20 @@ type Scheduler struct {
 	// still being replayed; zero otherwise.
 	repeatUntil time.Time
 	logger      *log.Logger
+	state       *State
 	wg          sync.WaitGroup
 	mu          sync.Mutex
 	running     map[string]bool
 }
 
-func NewScheduler(crontabPath string, logger *log.Logger) *Scheduler {
+// NewScheduler loads the crontab and the run history kept in statePath
+// (empty keeps it in memory only).
+func NewScheduler(crontabPath, statePath string, logger *log.Logger) *Scheduler {
 	s := &Scheduler{crontabPath: crontabPath, logger: logger, running: make(map[string]bool)}
+	var err error
+	if s.state, err = LoadState(statePath); err != nil {
+		logger.Printf("WARN state file unreadable, starting with an empty history: %v", err)
+	}
 	s.reloadIfChanged()
 	return s
 }
@@ -148,7 +155,9 @@ func (s *Scheduler) launch(jobCtx context.Context, job Job) {
 		if job.NoOverlap {
 			defer s.release(job.key)
 		}
-		runJob(jobCtx, job, s.logger)
+		s.warnOnSaveError(s.state.recordStart(job, time.Now()))
+		result := runJob(jobCtx, job, s.logger)
+		s.warnOnSaveError(s.state.recordFinish(job, time.Now(), result.Summary))
 	}()
 }
 
@@ -205,6 +214,9 @@ func (s *Scheduler) reloadIfChanged() {
 		return
 	}
 	s.jobs = jobs
+	if s.state.sync(jobs, time.Now()) {
+		s.warnOnSaveError(s.state.save())
+	}
 	if !s.mtime.IsZero() || s.lastProblem != "" {
 		s.logger.Printf("crontab reloaded, %d jobs", len(jobs))
 	}
@@ -221,4 +233,10 @@ func (s *Scheduler) logProblem(format string, args ...any) {
 	}
 	s.lastProblem = msg
 	s.logger.Print(msg)
+}
+
+func (s *Scheduler) warnOnSaveError(err error) {
+	if err != nil {
+		s.logger.Printf("WARN cannot save the state file: %v", err)
+	}
 }

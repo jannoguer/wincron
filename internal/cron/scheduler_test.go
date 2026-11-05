@@ -15,7 +15,7 @@ func testScheduler(t *testing.T, crontab string) (*Scheduler, *bytes.Buffer) {
 	t.Helper()
 	var buf bytes.Buffer
 	logger := log.New(&buf, "", 0)
-	s := NewScheduler(writeCrontab(t, crontab), logger)
+	s := NewScheduler(writeCrontab(t, crontab), "", logger)
 	return s, &buf
 }
 
@@ -99,7 +99,7 @@ func TestCollectDueSkipsRebootJobs(t *testing.T) {
 
 func TestNewSchedulerMissingCrontab(t *testing.T) {
 	var buf bytes.Buffer
-	s := NewScheduler(filepath.Join(t.TempDir(), "missing.txt"), log.New(&buf, "", 0))
+	s := NewScheduler(filepath.Join(t.TempDir(), "missing.txt"), "", log.New(&buf, "", 0))
 	if len(s.jobs) != 0 {
 		t.Errorf("got %d jobs, want 0", len(s.jobs))
 	}

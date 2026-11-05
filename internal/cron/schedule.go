@@ -118,9 +118,15 @@ func (s Schedule) isWildcard() bool {
 }
 
 func (s Schedule) Matches(t time.Time) bool {
-	if s.minute&(1<<t.Minute()) == 0 ||
-		s.hour&(1<<t.Hour()) == 0 ||
-		s.month&(1<<int(t.Month())) == 0 {
+	return s.minute&(1<<t.Minute()) != 0 &&
+		s.hour&(1<<t.Hour()) != 0 &&
+		s.dayMatches(t)
+}
+
+// dayMatches reports whether t's month, day of month and day of week allow
+// the schedule to run at some time that day.
+func (s Schedule) dayMatches(t time.Time) bool {
+	if s.month&(1<<int(t.Month())) == 0 {
 		return false
 	}
 	dayOfMonthOK := s.dayOfMonth&(1<<t.Day()) != 0
@@ -129,4 +135,62 @@ func (s Schedule) Matches(t time.Time) bool {
 		return dayOfMonthOK || dayOfWeekOK
 	}
 	return dayOfMonthOK && dayOfWeekOK
+}
+
+// searchYears bounds Next and Prev: a schedule that never matches (31 Feb)
+// would otherwise search forever.
+const searchYears = 5
+
+// Next returns the first time strictly after t at which the schedule runs,
+// or false if there is none within five years. It walks wall-clock minutes,
+// so a time inside a skipped DST hour is reported at the jump, when the
+// scheduler runs it.
+func (s Schedule) Next(t time.Time) (time.Time, bool) {
+	wall := wallClock(t).Add(time.Minute)
+	limit := wall.AddDate(searchYears, 0, 0)
+	for wall.Before(limit) {
+		switch {
+		case !s.dayMatches(wall):
+			wall = time.Date(wall.Year(), wall.Month(), wall.Day()+1, 0, 0, 0, 0, time.UTC)
+		case s.hour&(1<<wall.Hour()) == 0:
+			wall = time.Date(wall.Year(), wall.Month(), wall.Day(), wall.Hour()+1, 0, 0, 0, time.UTC)
+		case s.minute&(1<<wall.Minute()) == 0:
+			wall = wall.Add(time.Minute)
+		default:
+			return realTime(wall, t.Location()), true
+		}
+	}
+	return time.Time{}, false
+}
+
+// Prev returns the latest time at or before t at which the schedule runs,
+// or false if there is none within five years.
+func (s Schedule) Prev(t time.Time) (time.Time, bool) {
+	wall := wallClock(t)
+	limit := wall.AddDate(-searchYears, 0, 0)
+	for wall.After(limit) {
+		switch {
+		case !s.dayMatches(wall):
+			wall = time.Date(wall.Year(), wall.Month(), wall.Day(), 0, 0, 0, 0, time.UTC).Add(-time.Minute)
+		case s.hour&(1<<wall.Hour()) == 0:
+			wall = time.Date(wall.Year(), wall.Month(), wall.Day(), wall.Hour(), 0, 0, 0, time.UTC).Add(-time.Minute)
+		case s.minute&(1<<wall.Minute()) == 0:
+			wall = wall.Add(-time.Minute)
+		default:
+			return realTime(wall, t.Location()), true
+		}
+	}
+	return time.Time{}, false
+}
+
+// realTime converts a wall-clock reading (as a UTC time) to a moment in loc.
+// A reading inside a DST gap does not exist there; it maps to the jump
+// itself, the minute the scheduler runs such jobs.
+func realTime(wall time.Time, loc *time.Location) time.Time {
+	t := time.Date(wall.Year(), wall.Month(), wall.Day(), wall.Hour(), wall.Minute(), 0, 0, loc)
+	// Date maps a gap reading to before the jump; advance to the jump.
+	for wallClock(t).Before(wall) {
+		t = t.Add(time.Minute)
+	}
+	return t
 }

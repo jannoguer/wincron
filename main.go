@@ -17,16 +17,34 @@ import (
 // version is stamped via -ldflags "-X main.version=..." in release builds.
 var version = "dev"
 
+// paths locates wincron's files; everything but the log (see WINCRON_LOG)
+// sits next to the executable.
+type paths struct {
+	exe, crontab, log, state string
+}
+
+func locate() (paths, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return paths{}, err
+	}
+	dir := filepath.Dir(exe)
+	p := paths{
+		exe:     exe,
+		crontab: filepath.Join(dir, "crontab.txt"),
+		log:     filepath.Join(dir, "wincron.log"),
+		state:   filepath.Join(dir, "wincron-state.json"),
+	}
+	if v := os.Getenv("WINCRON_LOG"); v != "" {
+		p.log = v
+	}
+	return p, nil
+}
+
 func main() {
-	exePath, err := os.Executable()
+	p, err := locate()
 	if err != nil {
 		fatal(err)
-	}
-	exeDir := filepath.Dir(exePath)
-	crontabPath := filepath.Join(exeDir, "crontab.txt")
-	logPath := filepath.Join(exeDir, "wincron.log")
-	if p := os.Getenv("WINCRON_LOG"); p != "" {
-		logPath = p
 	}
 
 	isService, err := svc.IsWindowsService()
@@ -34,30 +52,31 @@ func main() {
 		fatal(err)
 	}
 	if isService {
-		if err := runService(crontabPath, logPath); err != nil {
+		if err := runService(p); err != nil {
 			reportFatalToEventLog(err)
 			fatal(err)
 		}
 		return
 	}
 
-	os.Exit(dispatch(commands(exePath, crontabPath, logPath), os.Args[1:], os.Stdout, os.Stderr))
+	os.Exit(dispatch(commands(p), os.Args[1:], os.Stdout, os.Stderr))
 }
 
-func commands(exePath, crontabPath, logPath string) []command {
+func commands(p paths) []command {
 	simple := func(name, args, summary string, f func() error) command {
 		return command{name, args, summary, func(*flag.FlagSet) func([]string) error { return noArgs(name, f) }}
 	}
 	return []command{
-		simple("list", "", "print jobs from the crontab file", func() error { return list(crontabPath) }),
-		simple("edit", "", "edit a copy of the crontab, install it once it validates", func() error { return edit(crontabPath) }),
+		simple("list", "", "print jobs from the crontab file", func() error { return list(p.crontab) }),
+		simple("edit", "", "edit a copy of the crontab, install it once it validates", func() error { return edit(p.crontab) }),
 		{"load", "<file>", "validate a file and install it as the crontab", func(*flag.FlagSet) func([]string) error {
-			return func(args []string) error { return load(crontabPath, args) }
+			return func(args []string) error { return load(p.crontab, args) }
 		}},
-		simple("validate", "", "check the crontab file for errors", func() error { return validate(crontabPath) }),
-		simple("daemon", "", "run the scheduler in the foreground (like cron -f)", func() error { return runForeground(crontabPath, logPath) }),
-		simple("install", "", "install to Program Files, add to PATH, start the service", func() error { return install(exePath) }),
-		simple("uninstall", "", "remove the service, PATH entry and files (keeps crontab.txt)", func() error { return uninstall(exePath) }),
+		simple("status", "", "show the service, the jobs, and their next and last runs", func() error { return status(p) }),
+		simple("validate", "", "check the crontab file for errors", func() error { return validate(p.crontab) }),
+		simple("daemon", "", "run the scheduler in the foreground (like cron -f)", func() error { return runForeground(p) }),
+		simple("install", "", "install to Program Files, add to PATH, start the service", func() error { return install(p.exe) }),
+		simple("uninstall", "", "remove the service, PATH entry and files (keeps crontab.txt)", func() error { return uninstall(p.exe) }),
 		simple("start", "", "start the service", startService),
 		simple("stop", "", "stop the service", stopService),
 		simple("version", "", "print the wincron version", func() error { fmt.Println(printableVersion()); return nil }),
@@ -82,15 +101,15 @@ func validate(crontabPath string) error {
 	return nil
 }
 
-func runForeground(crontabPath, logPath string) error {
-	logger, closer, err := openLogger(logPath, true)
+func runForeground(p paths) error {
+	logger, closer, err := openLogger(p.log, true)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = closer.Close() }()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	cron.NewScheduler(crontabPath, logger).Run(ctx)
+	cron.NewScheduler(p.crontab, p.state, logger).Run(ctx)
 	return nil
 }
 
