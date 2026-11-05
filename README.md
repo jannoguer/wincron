@@ -60,7 +60,7 @@ The file may be UTF-8 (with or without a BOM) or UTF-16 with a BOM, as Notepad a
 
 `wincron edit` (like `crontab -e`) opens a copy of the file in `%VISUAL%`, then `%EDITOR%`, then Notepad. The editor runs through `cmd.exe`, so it may take arguments (`EDITOR=code --wait`) or be a `.cmd` shim. When you save, the copy is validated: if it is unchanged nothing happens, if it has an error you are asked whether to retry the same edit, and if it is valid it atomically replaces the live file, so the running service never sees a half-edited crontab. If you cannot write the file (a service install under Program Files), `edit` asks for elevation and installs only the copy, with the editor still running as you. `wincron load FILE` validates a file and installs it the same way (like `crontab FILE`).
 
-Commands run with `cmd.exe /C`: pipes, redirection, `&&`, and batch files all work. Unlike classic cron, `%` is not special, so `%VAR%` expands as usual. The working directory is the service's (`System32`), so use absolute paths; `user=` jobs run in the user's profile directory instead.
+Commands run with `cmd.exe /C`: pipes, redirection, `&&`, and batch files all work. Unlike classic cron, `%` is not special, so `%VAR%` expands as usual. Jobs start in the profile directory of the account that runs them (`C:\Windows\System32\config\systemprofile` for SYSTEM, the user's profile for `user=`), like cron's `HOME`; use absolute paths anyway.
 
 A job and everything it spawns are terminated as a group when it finishes, so `start /b foo.exe` leaves nothing behind; design jobs to run to completion, not to detach long-lived processes. On service stop, running jobs get 20 seconds to finish before being terminated.
 

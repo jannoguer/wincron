@@ -321,3 +321,12 @@ func TestRunJobDecodesOEMOutput(t *testing.T) {
 		t.Errorf("log %q still contains the raw OEM byte", got)
 	}
 }
+
+func TestRunJobStartsInHomeDirectory(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("USERPROFILE", home)
+	got := runTestJob(t, context.Background(), Job{Command: "cd", Line: 1})
+	if !strings.Contains(got, home) {
+		t.Errorf("log %q does not show the job starting in %s", got, home)
+	}
+}

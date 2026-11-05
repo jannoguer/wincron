@@ -70,8 +70,17 @@ func runJob(ctx context.Context, job Job, logger *log.Logger) {
 		if profile := envValue(env, "USERPROFILE"); profile != "" {
 			cmd.Dir = profile
 		}
-	} else if len(job.Envs) > 0 {
-		cmd.Env = append(os.Environ(), job.Envs...)
+	} else {
+		if len(job.Envs) > 0 {
+			cmd.Env = append(os.Environ(), job.Envs...)
+		}
+		// Like cron's HOME: start in the scheduler account's profile, not
+		// System32.
+		if home, err := os.UserHomeDir(); err == nil {
+			cmd.Dir = home
+		} else {
+			logger.Printf("job L%d: no home directory, starting in the scheduler's working directory: %v", job.Line, err)
+		}
 	}
 
 	out := cappedBuffer{max: maxJobOutputBytes}
