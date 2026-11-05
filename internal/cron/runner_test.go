@@ -3,14 +3,11 @@ package cron
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -164,73 +161,6 @@ func TestKillOnJobCloseTerminatesDetachedChild(t *testing.T) {
 	time.Sleep(3 * time.Second)
 	if _, err := os.Stat(marker); err == nil {
 		t.Error("marker file exists: detached child survived the run")
-	}
-}
-
-func TestResumeMainThreadStartsSuspendedProcess(t *testing.T) {
-	cmd := exec.Command("cmd", "/C", "exit 5")
-	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_SUSPENDED}
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
-	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
-
-	select {
-	case err := <-done:
-		t.Fatalf("suspended process exited before being resumed: %v", err)
-	case <-time.After(300 * time.Millisecond):
-	}
-
-	if err := resumeMainThread(cmd.Process.Pid); err != nil {
-		t.Fatalf("resumeMainThread: %v", err)
-	}
-
-	select {
-	case err := <-done:
-		var exitErr *exec.ExitError
-		if !errors.As(err, &exitErr) || exitErr.ExitCode() != 5 {
-			t.Errorf("Wait() = %v, want exit code 5", err)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("process did not exit after resume")
-	}
-}
-
-func TestResumeMainThreadNoSuchProcess(t *testing.T) {
-	if err := resumeMainThread(999999); err == nil {
-		t.Error("resumeMainThread(nonexistent pid) = nil, want error")
-	}
-}
-
-func TestJobObjectTerminatesProcess(t *testing.T) {
-	cmd := exec.Command("ping", "-n", "30", "127.0.0.1")
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = cmd.Process.Kill() }()
-
-	job, err := windows.CreateJobObject(nil, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = windows.CloseHandle(job) }()
-	if err := assignToJobObject(job, cmd.Process.Pid); err != nil {
-		t.Fatal(err)
-	}
-	if err := windows.TerminateJobObject(job, 1); err != nil {
-		t.Fatal(err)
-	}
-
-	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
-	select {
-	case err := <-done:
-		if err == nil {
-			t.Error("terminated process reported exit 0")
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("process still running after TerminateJobObject")
 	}
 }
 

@@ -7,8 +7,6 @@ import (
 	"io"
 	"log"
 	"os"
-	"os/exec"
-	"syscall"
 	"time"
 	"unicode/utf16"
 	"unicode/utf8"
@@ -76,15 +74,20 @@ func runJob(ctx context.Context, job Job, logger *log.Logger, stream io.Writer) 
 		ctx, cancel = context.WithTimeout(ctx, job.Timeout)
 		defer cancel()
 	}
-	shell := os.Getenv("ComSpec")
-	if shell == "" {
-		shell = "cmd"
+	warn := func(format string, args ...any) {
+		logger.Printf("WARN %s: %s", job.label(), fmt.Sprintf(format, args...))
 	}
-	cmd := exec.CommandContext(ctx, shell)
-	// /S makes cmd strip just the outer quotes, leaving a command that
-	// starts with a quoted path intact.
-	cmd.SysProcAttr = &syscall.SysProcAttr{CmdLine: `/S /C "` + job.Command + `"`}
-	cmd.WaitDelay = pipeWaitDelay
+	shell, err := shellPath()
+	if err != nil {
+		logger.Printf("END %s: %v", job.label(), err)
+		return RunResult{Summary: err.Error()}
+	}
+	spec := procSpec{
+		appName: shell,
+		// /S makes cmd strip just the outer quotes, leaving a command that
+		// starts with a quoted path intact.
+		cmdLine: `"` + shell + `" /S /C "` + job.Command + `"`,
+	}
 	if job.User != "" {
 		token, env, err := userContext(job.User)
 		if err != nil {
@@ -92,23 +95,21 @@ func runJob(ctx context.Context, job Job, logger *log.Logger, stream io.Writer) 
 			return RunResult{Summary: "skipped: " + err.Error()}
 		}
 		defer func() { _ = token.Close() }()
-		cmd.SysProcAttr.Token = syscall.Token(token)
+		spec.token = token
 		// Keep the console hidden.
-		cmd.SysProcAttr.CreationFlags |= windows.CREATE_NO_WINDOW
-		cmd.Env = append(env, job.Envs...)
-		if profile := envValue(env, "USERPROFILE"); profile != "" {
-			cmd.Dir = profile
-		}
+		spec.flags |= windows.CREATE_NO_WINDOW
+		spec.env = mergeEnv(env, job.Envs)
+		spec.dir = envValue(env, "USERPROFILE")
 	} else {
 		if len(job.Envs) > 0 {
-			cmd.Env = append(os.Environ(), job.Envs...)
+			spec.env = mergeEnv(os.Environ(), job.Envs)
 		}
 		// Like cron's HOME: start in the scheduler account's profile, not
 		// System32.
 		if home, err := os.UserHomeDir(); err == nil {
-			cmd.Dir = home
+			spec.dir = home
 		} else {
-			logger.Printf("WARN %s: no home directory, starting in the scheduler's working directory: %v", job.label(), err)
+			warn("no home directory, starting in the scheduler's working directory: %v", err)
 		}
 	}
 
@@ -117,42 +118,24 @@ func runJob(ctx context.Context, job Job, logger *log.Logger, stream io.Writer) 
 	if stream != nil {
 		sink = io.MultiWriter(&out, tolerantWriter{stream})
 	}
-	cmd.Stdout = sink
-	cmd.Stderr = sink
 
 	// A job object tracks the whole process tree: cancellation terminates it,
 	// and kill-on-close reaps survivors when the deferred CloseHandle runs
-	// (or the service itself dies). Kill remains the fallback.
-	killJob, killJobErr := windows.CreateJobObject(nil, nil)
-	if killJobErr == nil {
+	// (or the service itself dies).
+	var killJob windows.Handle
+	if handle, err := windows.CreateJobObject(nil, nil); err != nil {
+		warn("cannot create a job object, descendants may outlive the run: %v", err)
+	} else {
+		killJob = handle
 		defer func() { _ = windows.CloseHandle(killJob) }()
-		cmd.Cancel = func() error {
-			_ = windows.TerminateJobObject(killJob, 1)
-			return cmd.Process.Kill()
-		}
 		if err := setKillOnClose(killJob); err != nil {
-			logger.Printf("WARN %s: cannot set kill-on-close, descendants may outlive the run: %v", job.label(), err)
+			warn("cannot set kill-on-close, descendants may outlive the run: %v", err)
 		}
-		// Start suspended: a child spawned before assignment to the job
-		// object would escape tree termination.
-		cmd.SysProcAttr.CreationFlags |= windows.CREATE_SUSPENDED
 	}
 
 	logger.Printf("CMD %s", job.label())
 	started := time.Now()
-	err := cmd.Start()
-	if err == nil {
-		if killJobErr == nil {
-			if aerr := assignToJobObject(killJob, cmd.Process.Pid); aerr != nil {
-				logger.Printf("WARN %s: cannot track process tree: %v", job.label(), aerr)
-			}
-			if rerr := resumeMainThread(cmd.Process.Pid); rerr != nil {
-				logger.Printf("WARN %s: cannot resume suspended process, killing: %v", job.label(), rerr)
-				_ = cmd.Process.Kill()
-			}
-		}
-		err = cmd.Wait()
-	}
+	result, err := runProcess(ctx, spec, killJob, sink, warn)
 	duration := time.Since(started).Round(time.Millisecond)
 
 	var output []byte
@@ -167,16 +150,35 @@ func runJob(ctx context.Context, job Job, logger *log.Logger, stream io.Writer) 
 			logger.Printf("OUT %s: truncated, %d of %d bytes shown", job.label(), len(out.buf), out.total)
 		}
 	}
-	if err != nil {
-		if job.Timeout > 0 && errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			logger.Printf("END %s: timed out after %s", job.label(), job.Timeout)
-			return RunResult{Summary: "timed out after " + job.Timeout.String(), Output: output}
-		}
+	switch {
+	case err != nil:
 		logger.Printf("END %s: %v (%s)", job.label(), err, duration)
 		return RunResult{Summary: err.Error(), Output: output}
+	case result.terminated && job.Timeout > 0 && errors.Is(ctx.Err(), context.DeadlineExceeded):
+		logger.Printf("END %s: timed out after %s", job.label(), job.Timeout)
+		return RunResult{Summary: "timed out after " + job.Timeout.String(), Output: output}
+	case result.terminated:
+		logger.Printf("END %s: canceled (%s)", job.label(), duration)
+		return RunResult{Summary: "canceled", Output: output}
+	case result.exitCode != 0:
+		summary := fmt.Sprintf("exit status %d", result.exitCode)
+		logger.Printf("END %s: %s (%s)", job.label(), summary, duration)
+		return RunResult{Summary: summary, Output: output}
 	}
 	logger.Printf("END %s: exit 0 (%s)", job.label(), duration)
 	return RunResult{OK: true, Summary: "exit 0", Output: output}
+}
+
+// shellPath returns the command interpreter jobs run under.
+func shellPath() (string, error) {
+	if shell := os.Getenv("ComSpec"); shell != "" {
+		return shell, nil
+	}
+	dir, err := windows.GetSystemDirectory()
+	if err != nil {
+		return "", fmt.Errorf("locating cmd.exe: %w", err)
+	}
+	return dir + `\cmd.exe`, nil
 }
 
 // setKillOnClose configures the job object to terminate every process it
@@ -194,48 +196,6 @@ func setKillOnClose(job windows.Handle) error {
 		uint32(unsafe.Sizeof(info)),
 	)
 	return err
-}
-
-func assignToJobObject(job windows.Handle, pid int) error {
-	proc, err := windows.OpenProcess(windows.PROCESS_SET_QUOTA|windows.PROCESS_TERMINATE, false, uint32(pid))
-	if err != nil {
-		return err
-	}
-	defer func() { _ = windows.CloseHandle(proc) }()
-	return windows.AssignProcessToJobObject(job, proc)
-}
-
-// resumeMainThread resumes every thread owned by pid, releasing a process
-// started with CREATE_SUSPENDED.
-func resumeMainThread(pid int) error {
-	snapshot, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPTHREAD, 0)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = windows.CloseHandle(snapshot) }()
-
-	var te windows.ThreadEntry32
-	te.Size = uint32(unsafe.Sizeof(te))
-	found := false
-	for terr := windows.Thread32First(snapshot, &te); terr == nil; terr = windows.Thread32Next(snapshot, &te) {
-		if te.OwnerProcessID != uint32(pid) {
-			continue
-		}
-		thread, oerr := windows.OpenThread(windows.THREAD_SUSPEND_RESUME, false, te.ThreadID)
-		if oerr != nil {
-			return oerr
-		}
-		_, rerr := windows.ResumeThread(thread)
-		_ = windows.CloseHandle(thread)
-		if rerr != nil {
-			return rerr
-		}
-		found = true
-	}
-	if !found {
-		return fmt.Errorf("no threads found for pid %d", pid)
-	}
-	return nil
 }
 
 var procGetOEMCP = windows.NewLazySystemDLL("kernel32.dll").NewProc("GetOEMCP")
