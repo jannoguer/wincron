@@ -89,20 +89,24 @@ func runJob(ctx context.Context, job Job, logger *log.Logger, stream io.Writer) 
 		cmdLine: `"` + shell + `" /S /C "` + job.Command + `"`,
 	}
 	if job.User != "" {
-		token, env, err := userContext(job.User)
+		session, err := userContext(job.User)
 		if err != nil {
 			logger.Printf("SKIP %s: %v", job.label(), err)
 			return RunResult{Summary: "skipped: " + err.Error()}
 		}
-		defer func() { _ = token.Close() }()
-		spec.token = token
-		// A service has no window station in the user's session, so name
-		// the interactive one or GUI programs have nowhere to show.
-		spec.desktop = interactiveDesktop
+		defer func() {
+			if err := session.close(); err != nil {
+				warn("releasing the user session: %v", err)
+			}
+		}()
+		spec.token = session.token
+		// lpDesktop must be set explicitly: a service has no window station
+		// in the user's session.
+		spec.desktop = &session.desktop
 		// Keep the console hidden.
 		spec.flags |= windows.CREATE_NO_WINDOW
-		spec.env = mergeEnv(env, job.Envs)
-		spec.dir = envValue(env, "USERPROFILE")
+		spec.env = mergeEnv(session.env, job.Envs)
+		spec.dir = envValue(session.env, "USERPROFILE")
 	} else {
 		if len(job.Envs) > 0 {
 			spec.env = mergeEnv(os.Environ(), job.Envs)

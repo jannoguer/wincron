@@ -21,8 +21,9 @@ type procSpec struct {
 	// env is the complete environment; nil inherits the scheduler's.
 	env []string
 	dir string
-	// desktop is lpDesktop, such as winsta0\default; empty inherits.
-	desktop string
+	// desktop is lpDesktop, such as winsta0\default; an empty string asks for
+	// a window station of the logon session's own; nil inherits.
+	desktop *string
 	// token runs the process as that user; zero uses the scheduler's own.
 	token windows.Token
 	// flags are extra creation flags.
@@ -97,8 +98,8 @@ func createSuspended(spec procSpec, stdin, stdout windows.Handle) (process, thre
 		},
 		ProcThreadAttributeList: attrs.List(),
 	}
-	if spec.desktop != "" {
-		if si.Desktop, err = windows.UTF16PtrFromString(spec.desktop); err != nil {
+	if spec.desktop != nil {
+		if si.Desktop, err = windows.UTF16PtrFromString(*spec.desktop); err != nil {
 			return 0, 0, err
 		}
 	}

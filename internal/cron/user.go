@@ -1,6 +1,7 @@
 package cron
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"unsafe"
@@ -12,19 +13,61 @@ import (
 // does not define.
 const wtsCurrentServerHandle windows.Handle = 0
 
-// userContext returns a primary token and profile environment for the logged-on user.
-// The caller must close the token.
-func userContext(user string) (windows.Token, []string, error) {
+// errNotLoggedOn means the user has no session on this machine.
+var errNotLoggedOn = errors.New("not logged on")
+
+// userSession is what a user= job needs to start a process as that user.
+type userSession struct {
+	token windows.Token
+	env   []string
+	// desktop is lpDesktop: the user's visible desktop for a logged-on user,
+	// empty (a window station of its own) for an S4U logon.
+	desktop string
+	// release undoes what setting the session up did.
+	release func() error
+}
+
+func (s userSession) close() error {
+	return s.release()
+}
+
+// userContext returns a primary token, profile environment and desktop for
+// user: from their session if they are logged on, otherwise from an S4U
+// logon, which has no network credentials. The caller must close the result.
+func userContext(user string) (userSession, error) {
 	token, err := findSessionToken(user)
+	if errors.Is(err, errNotLoggedOn) {
+		return s4uSession(user)
+	}
 	if err != nil {
-		return 0, nil, err
+		return userSession{}, err
 	}
 	env, err := environForToken(token)
 	if err != nil {
 		_ = token.Close()
-		return 0, nil, fmt.Errorf("reading user environment: %w", err)
+		return userSession{}, fmt.Errorf("reading user environment: %w", err)
 	}
-	return token, env, nil
+	return userSession{token: token, env: env, desktop: interactiveDesktop, release: token.Close}, nil
+}
+
+// s4uSession logs user on without a session and loads their profile.
+func s4uSession(user string) (userSession, error) {
+	token, err := s4uToken(user)
+	if err != nil {
+		return userSession{}, fmt.Errorf("user %q is not logged on and a background logon failed: %w", user, err)
+	}
+	profile, err := loadProfile(token, user)
+	if err != nil {
+		_ = token.Close()
+		return userSession{}, fmt.Errorf("loading the profile of %q: %w", user, err)
+	}
+	env, err := environForToken(token)
+	if err != nil {
+		return userSession{}, errors.Join(fmt.Errorf("reading user environment: %w", err), unloadProfile(token, profile), token.Close())
+	}
+	return userSession{token: token, env: env, release: func() error {
+		return errors.Join(unloadProfile(token, profile), token.Close())
+	}}, nil
 }
 
 // findSessionToken returns the session token for the user, preferring an active session.
@@ -65,7 +108,7 @@ func findSessionToken(user string) (windows.Token, error) {
 	if disconnected != 0 {
 		return disconnected, nil
 	}
-	return 0, fmt.Errorf("user %q is not logged on", user)
+	return 0, fmt.Errorf("user %q is %w", user, errNotLoggedOn)
 }
 
 // tokenBelongsTo reports whether the token's account matches user (case-insensitive).

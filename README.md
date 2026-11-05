@@ -92,8 +92,10 @@ Names must match `[A-Za-z_][A-Za-z0-9_]*`; whitespace around the name and value 
 
 `* * * * * user=foo command` runs the job with that user's full profile, `PATH`, and environment, in their profile directory. Names match case-insensitively, as `foo` or `DOMAIN\foo`; quote names with spaces: `user="Jan Noguer"` (single or double quotes). Crontab `NAME=value` lines still apply on top of the user's environment.
 
-> [!IMPORTANT]
-> The user must already be logged in when the job triggers, otherwise the run is skipped and logged. A disconnected session (fast user switching, a dropped remote session) counts as logged in; an active session is preferred.
+If the user is logged in, the job runs in their session with their token; a disconnected session (fast user switching, a dropped remote session) counts as logged in, and an active session is preferred. If the user is not logged in, the job still runs: wincron makes a background (S4U) logon for them, the same mechanism as Task Scheduler's "run whether the user is logged on or not" without storing a password. That also makes `@reboot user=NAME` work at boot.
+
+> [!NOTE]
+> A background logon has no network credentials: the job cannot reach network shares or other machines as the user, and mapped drives do not exist. It runs with the user's profile and environment but without a visible desktop. The account needs the "Log on as a batch job" or "Access this computer from the network" right (ordinary users have the latter by default). If the logon fails, the run is skipped and logged with the reason.
 
 A `user=` job runs on the user's own desktop, so a GUI program it starts (`notepad`, a tray tool) is visible to that user. A job without `user=` runs as SYSTEM in the non-interactive session 0, where windows are never shown; use `user=` for anything that needs a window.
 
