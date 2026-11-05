@@ -7,7 +7,9 @@ import (
 	"testing"
 	"time"
 	"unicode/utf8"
+	"unsafe"
 
+	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/svc"
 
 	"wincron/internal/cron"
@@ -29,13 +31,24 @@ func waitForRunning(t *testing.T, status <-chan svc.Status) svc.Status {
 
 func runTestService(t *testing.T) (chan svc.ChangeRequest, chan svc.Status, chan struct{}) {
 	t.Helper()
+	s, _ := newTestService(t, "# no jobs\n")
+	return startTestService(s)
+}
+
+// newTestService returns a service over a temporary crontab, and the log
+// path it writes to.
+func newTestService(t *testing.T, crontab string) (*cronService, string) {
+	t.Helper()
 	dir := t.TempDir()
 	crontabPath := filepath.Join(dir, "crontab.txt")
-	if err := os.WriteFile(crontabPath, []byte("# no jobs\n"), 0644); err != nil {
+	if err := os.WriteFile(crontabPath, []byte(crontab), 0644); err != nil {
 		t.Fatal(err)
 	}
-	s := &cronService{crontabPath: crontabPath, logPath: filepath.Join(dir, "wincron.log")}
+	logPath := filepath.Join(dir, "wincron.log")
+	return &cronService{crontabPath: crontabPath, logPath: logPath}, logPath
+}
 
+func startTestService(s *cronService) (chan svc.ChangeRequest, chan svc.Status, chan struct{}) {
 	requests := make(chan svc.ChangeRequest, 1)
 	status := make(chan svc.Status, 16)
 	done := make(chan struct{})
@@ -99,5 +112,41 @@ func TestTailBytes(t *testing.T) {
 	multibyte := []byte("aaa\u00e9\u00e9\u00e9")
 	if got := tailBytes(multibyte, 3); !utf8.Valid(got) {
 		t.Errorf("tailBytes split a character: %q", got)
+	}
+}
+
+func TestServiceRunsLogonJobsOnSessionLogon(t *testing.T) {
+	s, logPath := newTestService(t, "@logon echo logon-any\n@logon user=jan echo logon-jan\n@logon user=bob echo logon-bob\n")
+	var gotSession uint32
+	s.sessionUser = func(session uint32) (func(string) bool, func(), error) {
+		gotSession = session
+		return func(user string) bool { return user == "jan" }, func() {}, nil
+	}
+	requests, status, done := startTestService(s)
+	running := waitForRunning(t, status)
+	if running.Accepts&svc.AcceptSessionChange == 0 {
+		t.Errorf("Accepts = %b, want AcceptSessionChange set", running.Accepts)
+	}
+
+	notification := windows.WTSSESSION_NOTIFICATION{Size: uint32(unsafe.Sizeof(windows.WTSSESSION_NOTIFICATION{})), SessionID: 42}
+	requests <- svc.ChangeRequest{Cmd: svc.SessionChange, EventType: windows.WTS_SESSION_LOGON, EventData: uintptr(unsafe.Pointer(&notification))}
+	// A logoff event must not start anything.
+	requests <- svc.ChangeRequest{Cmd: svc.SessionChange, EventType: windows.WTS_SESSION_LOGOFF, EventData: uintptr(unsafe.Pointer(&notification))}
+	requests <- svc.ChangeRequest{Cmd: svc.Stop}
+	<-done
+
+	if gotSession != 42 {
+		t.Errorf("session = %d, want 42", gotSession)
+	}
+	log := readFile(t, logPath)
+	// Without SYSTEM the user= job is skipped at token lookup, but its SKIP
+	// line proves it was started for the logon.
+	for _, want := range []string{"CMD (SYSTEM) echo logon-any", "(jan) echo logon-jan"} {
+		if got := strings.Count(log, want); got != 1 {
+			t.Errorf("%q appears %d times in the log, want 1:\n%s", want, got, log)
+		}
+	}
+	if strings.Contains(log, "logon-bob") {
+		t.Errorf("log %q: the job of another user ran", log)
 	}
 }

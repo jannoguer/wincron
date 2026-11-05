@@ -112,6 +112,9 @@ func nextRun(job cron.Job, now time.Time) string {
 	if job.Reboot {
 		return "when the service starts"
 	}
+	if job.Logon {
+		return "when a user logs on (service only)"
+	}
 	next, ok := job.Schedule.Next(now)
 	if !ok {
 		return "never"

@@ -30,13 +30,22 @@ type Scheduler struct {
 	// OnFailure, if set before Run, is called after each failed run, from the
 	// goroutine that ran the job. An overlap=no skip is not a failure.
 	OnFailure func(Failure)
+	// LogonTriggers is set by a host that calls RunLogon. Without it @logon
+	// jobs never run, and the scheduler says so once.
+	LogonTriggers bool
 
 	crontabPath string
 	// jobs is replaced by reloadIfChanged under jobsMu; goroutines other
 	// than the reloader read it through jobList.
-	jobsMu      sync.RWMutex
-	jobs        []Job
-	reloadMu    sync.Mutex
+	jobsMu   sync.RWMutex
+	jobs     []Job
+	reloadMu sync.Mutex
+	// jobCtx is the context scheduled jobs run under; nil unless Run is
+	// between starting and shutting down. Guarded by mu.
+	jobCtx      context.Context
+	warnedLogon bool
+	// started is closed once Run accepts RunLogon.
+	started     chan struct{}
 	mtime       time.Time
 	lastProblem string
 	// repeatUntil is the wall minute the clock moved back from, while it is
@@ -52,7 +61,7 @@ type Scheduler struct {
 // NewScheduler loads the crontab and the run history kept in statePath
 // (empty keeps it in memory only).
 func NewScheduler(crontabPath, statePath string, logger *log.Logger) *Scheduler {
-	s := &Scheduler{crontabPath: crontabPath, logger: logger, running: make(map[string]bool)}
+	s := &Scheduler{crontabPath: crontabPath, logger: logger, running: make(map[string]bool), started: make(chan struct{})}
 	var err error
 	if s.state, err = LoadState(statePath); err != nil {
 		logger.Printf("WARN state file unreadable, starting with an empty history: %v", err)
@@ -65,7 +74,11 @@ func (s *Scheduler) Run(ctx context.Context) {
 	jobCtx, cancelJobs := context.WithCancel(context.Background())
 	defer cancelJobs()
 
+	s.setJobCtx(jobCtx)
+	close(s.started)
+	defer s.clearJobCtx()
 	s.logger.Printf("scheduler started, %d jobs from %s", len(s.jobList()), s.crontabPath)
+	s.warnIfLogonJobsCannotRun()
 	s.runRebootJobs(jobCtx)
 	s.runMissedJobs(jobCtx, time.Now(), nil)
 	lastMinute := time.Now().Truncate(time.Minute)
@@ -75,11 +88,13 @@ func (s *Scheduler) Run(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			timer.Stop()
+			s.clearJobCtx()
 			s.shutdown(cancelJobs)
 			return
 		case <-timer.C:
 		}
 		s.reloadIfChanged()
+		s.warnIfLogonJobsCannotRun()
 		now := time.Now().Truncate(time.Minute)
 		lastMinute = s.runDueJobs(jobCtx, lastMinute, now)
 	}
@@ -174,7 +189,7 @@ func (s *Scheduler) collectDue(lastMinute, now time.Time) ([]Job, time.Time) {
 	}
 	var due []Job
 	for _, job := range s.jobList() {
-		if job.Reboot {
+		if job.Reboot || job.Logon {
 			continue
 		}
 		for minute := first; !minute.After(wallNow); minute = minute.Add(time.Minute) {
@@ -195,6 +210,56 @@ func (s *Scheduler) collectDue(lastMinute, now time.Time) ([]Job, time.Time) {
 // minute by minute without DST adjustments.
 func wallClock(t time.Time) time.Time {
 	return time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), 0, 0, time.UTC)
+}
+
+func (s *Scheduler) setJobCtx(ctx context.Context) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.jobCtx = ctx
+}
+
+func (s *Scheduler) clearJobCtx() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.jobCtx = nil
+}
+
+// Started returns a channel closed once Run is accepting RunLogon calls.
+func (s *Scheduler) Started() <-chan struct{} {
+	return s.started
+}
+
+// RunLogon starts the @logon jobs for a user who just logged on: those
+// without user=, and those whose user= satisfies loggedOn. It does nothing
+// while the scheduler is not running. Call it from one goroutine, the one
+// that also stops the scheduler, so a launch never races shutdown.
+func (s *Scheduler) RunLogon(loggedOn func(user string) bool) {
+	s.mu.Lock()
+	ctx := s.jobCtx
+	s.mu.Unlock()
+	if ctx == nil {
+		return
+	}
+	s.reloadIfChanged()
+	for _, job := range s.jobList() {
+		if job.Logon && (job.User == "" || loggedOn(job.User)) {
+			s.launch(ctx, job)
+		}
+	}
+}
+
+// warnIfLogonJobsCannotRun says once that @logon jobs need the service.
+func (s *Scheduler) warnIfLogonJobsCannotRun() {
+	if s.LogonTriggers || s.warnedLogon {
+		return
+	}
+	for _, job := range s.jobList() {
+		if job.Logon {
+			s.warnedLogon = true
+			s.logger.Print("WARN @logon jobs only run when wincron runs as the service; they are ignored here")
+			return
+		}
+	}
 }
 
 func (s *Scheduler) runRebootJobs(jobCtx context.Context) {

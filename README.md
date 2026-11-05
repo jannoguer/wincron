@@ -47,6 +47,7 @@ Numeric 5-field cron expressions, named aliases in the month and day-of-week fie
 0 9 * jan-mar mon-fri report.exe
 @daily backup.exe
 @reboot foo.exe
+@logon notify.exe
 ```
 
 A step on a bare value runs to the end of the field (`5/3` = 5, 8, ..., 59).
@@ -54,6 +55,8 @@ A step on a bare value runs to the end of the field (`5/3` = 5, 8, ..., 59).
 When both day-of-month and day-of-week are restricted, a day matching either one runs the job (`0 0 13 * 5` = every 13th and every Friday). As in standard cron, a field starting with `*`, such as `*/2`, counts as unrestricted, so `0 0 */2 * 1` runs only on Mondays that fall on odd days.
 
 `@reboot` runs once each time the scheduler starts (boot, service restart, or foreground `daemon`), not when the crontab is edited.
+
+`@logon` runs each time a user logs on to the machine (a console, fast-user-switch or remote session), like Task Scheduler's "At log on" trigger. Without `user=` it runs as SYSTEM on every logon. With `user=NAME` it runs only when that user logs on, in their session. Logon events are delivered by the service, so `@logon` jobs do not run under the foreground `daemon` (which says so in its log). Logons that happen while the service is stopped are not replayed.
 
 ## The crontab file
 

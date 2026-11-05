@@ -5,10 +5,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"syscall"
 	"time"
 	"unicode/utf8"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/svc"
@@ -24,6 +26,9 @@ type cronService struct {
 	crontabPath, logPath, statePath string
 	// pipeName, if set, is where "wincron test" requests are served.
 	pipeName string
+	// sessionUser resolves a logon event's session to its user; nil uses
+	// cron.SessionUser.
+	sessionUser func(session uint32) (matches func(user string) bool, release func(), err error)
 }
 
 // startStopWaitHintMillis tells SCM how long a pending start or stop may
@@ -88,6 +93,7 @@ func (s *cronService) Execute(args []string, requests <-chan svc.ChangeRequest, 
 	defer func() { _ = closer.Close() }()
 
 	scheduler := cron.NewScheduler(s.crontabPath, s.statePath, logger)
+	scheduler.LogonTriggers = true
 	if elog, err := eventlog.Open(serviceName); err != nil {
 		logger.Printf("WARN event log unavailable, failed jobs are only logged to the file: %v", err)
 	} else {
@@ -105,6 +111,7 @@ func (s *cronService) Execute(args []string, requests <-chan svc.ChangeRequest, 
 		scheduler.Run(ctx)
 		close(done)
 	}()
+	<-scheduler.Started()
 	pipeDone := make(chan struct{})
 	if s.pipeName == "" {
 		close(pipeDone)
@@ -118,11 +125,15 @@ func (s *cronService) Execute(args []string, requests <-chan svc.ChangeRequest, 
 		}()
 	}
 
-	status <- svc.Status{State: svc.Running, Accepts: svc.AcceptStop | svc.AcceptShutdown | svc.AcceptPreShutdown}
+	status <- svc.Status{State: svc.Running, Accepts: svc.AcceptStop | svc.AcceptShutdown | svc.AcceptPreShutdown | svc.AcceptSessionChange}
 	for req := range requests {
 		switch req.Cmd {
 		case svc.Interrogate:
 			status <- req.CurrentStatus
+		case svc.SessionChange:
+			if req.EventType == windows.WTS_SESSION_LOGON {
+				s.handleLogon(scheduler, logger, req.EventData)
+			}
 		// PreShutdown replaces Shutdown once accepted, and allows minutes.
 		case svc.Stop, svc.Shutdown, svc.PreShutdown:
 			status <- svc.Status{State: svc.StopPending, WaitHint: startStopWaitHintMillis}
@@ -136,6 +147,25 @@ func (s *cronService) Execute(args []string, requests <-chan svc.ChangeRequest, 
 	<-done
 	<-pipeDone
 	return false, 0
+}
+
+// handleLogon runs the @logon jobs for the session a WTS_SESSION_LOGON event
+// names. eventData is the WTSSESSION_NOTIFICATION the service dispatcher
+// passes, valid only while the control is handled.
+func (s *cronService) handleLogon(scheduler *cron.Scheduler, logger *log.Logger, eventData uintptr) {
+	// The dispatcher hands the pointer over as a uintptr.
+	notification := (*windows.WTSSESSION_NOTIFICATION)(unsafe.Add(unsafe.Pointer(nil), eventData))
+	sessionUser := s.sessionUser
+	if sessionUser == nil {
+		sessionUser = cron.SessionUser
+	}
+	matches, release, err := sessionUser(notification.SessionID)
+	if err != nil {
+		logger.Printf("WARN @logon: %v", err)
+		matches, release = func(string) bool { return false }, func() {}
+	}
+	defer release()
+	scheduler.RunLogon(matches)
 }
 
 func runService(p paths) error {

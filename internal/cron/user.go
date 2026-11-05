@@ -160,3 +160,14 @@ func envValue(envs []string, name string) string {
 	}
 	return ""
 }
+
+// SessionUser returns a function reporting whether a user= name belongs to
+// the user logged on to session. Call release when done with it. It needs
+// SE_TCB_NAME (LocalSystem).
+func SessionUser(session uint32) (matches func(user string) bool, release func(), err error) {
+	var token windows.Token
+	if err := windows.WTSQueryUserToken(session, &token); err != nil {
+		return nil, nil, fmt.Errorf("querying the user of session %d: %w", session, err)
+	}
+	return func(user string) bool { return tokenBelongsTo(token, user) }, func() { _ = token.Close() }, nil
+}

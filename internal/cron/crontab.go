@@ -15,8 +15,8 @@ import (
 
 const scheduleFieldCount = 5
 
-// scheduleNicknames maps nicknames to 5-field schedules; @reboot has no
-// equivalent and is handled separately.
+// scheduleNicknames maps nicknames to 5-field schedules; @reboot and @logon
+// have no equivalent and are handled separately.
 var scheduleNicknames = map[string]string{
 	"@hourly":   "0 * * * *",
 	"@daily":    "0 0 * * *",
@@ -30,10 +30,13 @@ var scheduleNicknames = map[string]string{
 type Job struct {
 	Schedule Schedule
 	// Spec is the schedule as written: five fields or a nickname.
-	Spec      string
-	Command   string
-	Line      int
-	Reboot    bool
+	Spec    string
+	Command string
+	Line    int
+	Reboot  bool
+	// Logon marks an @logon job: it runs when a user logs on, not on a
+	// schedule.
+	Logon     bool
 	Envs      []string
 	User      string
 	Timeout   time.Duration
@@ -112,20 +115,21 @@ func Parse(data []byte) ([]Job, error) {
 		fields := strings.Fields(line)
 		if strings.HasPrefix(fields[0], "@") {
 			nickname := strings.ToLower(fields[0])
-			if nickname == "@reboot" {
+			if nickname == "@reboot" || nickname == "@logon" {
 				opts, command, err := jobTail(line, 1, lineNo)
 				if err != nil {
 					return nil, err
 				}
 				if command == "" {
-					return nil, fmt.Errorf("line %d: @reboot requires a command", lineNo)
+					return nil, fmt.Errorf("line %d: %s requires a command", lineNo, nickname)
 				}
 				if opts.MissedRun {
-					return nil, fmt.Errorf("line %d: missed= does not apply to @reboot", lineNo)
+					return nil, fmt.Errorf("line %d: missed= does not apply to %s", lineNo, nickname)
 				}
 				job := opts.job(command, lineNo, envs)
-				job.Reboot = true
-				job.Spec = "@reboot"
+				job.Reboot = nickname == "@reboot"
+				job.Logon = nickname == "@logon"
+				job.Spec = nickname
 				add(job, line)
 				continue
 			}
