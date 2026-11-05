@@ -56,6 +56,8 @@ When both day-of-month and day-of-week are restricted, a day matching either one
 
 `crontab.txt` lives next to the executable (`%ProgramFiles%\wincron\crontab.txt` for a service install). Changes are picked up within a minute, keyed on the file's modification time (an edit that preserves the mtime is not noticed). A file with an error keeps the previous jobs and logs the problem; a missing file means no jobs until it appears.
 
+The file may be UTF-8 (with or without a BOM) or UTF-16 with a BOM, as Notepad and PowerShell write it.
+
 `wincron.exe edit` opens it in `%EDITOR%` (Notepad if unset; a single executable with no arguments) and validates on save. For a service install this needs an elevated shell.
 
 Commands run with `cmd.exe /C`: pipes, redirection, `&&`, and batch files all work. Unlike classic cron, `%` is not special, so `%VAR%` expands as usual. The working directory is the service's (`System32`), so use absolute paths; `user=` jobs run in the user's profile directory instead.

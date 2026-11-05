@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf16"
 )
 
 func writeCrontab(t *testing.T, content string) string {
@@ -384,5 +385,69 @@ func TestSnapshotIsIndependent(t *testing.T) {
 	}
 	if snapshot(nil) != nil {
 		t.Error("snapshot(nil) should be nil")
+	}
+}
+
+func writeCrontabBytes(t *testing.T, data []byte) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "crontab.txt")
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func utf16Bytes(s string, bigEndian bool) []byte {
+	bom := []byte{0xFF, 0xFE}
+	if bigEndian {
+		bom = []byte{0xFE, 0xFF}
+	}
+	out := bom
+	for _, u := range utf16.Encode([]rune(s)) {
+		if bigEndian {
+			out = append(out, byte(u>>8), byte(u))
+		} else {
+			out = append(out, byte(u), byte(u>>8))
+		}
+	}
+	return out
+}
+
+func TestLoadFileEncodings(t *testing.T) {
+	const body = "# caf\u00e9\r\n0 5 * * 1 backup.exe\r\n"
+	bom := []byte{0xEF, 0xBB, 0xBF}
+	tests := []struct {
+		name string
+		data []byte
+	}{
+		{"utf8 bom before comment", append(bom, body...)},
+		{"utf8 bom before job", append(bom, "0 5 * * 1 backup.exe\r\n"...)},
+		{"utf16 le", utf16Bytes(body, false)},
+		{"utf16 be", utf16Bytes(body, true)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			jobs, err := LoadFile(writeCrontabBytes(t, tt.data))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(jobs) != 1 || jobs[0].Command != "backup.exe" {
+				t.Errorf("jobs = %+v, want one backup.exe job", jobs)
+			}
+		})
+	}
+}
+
+func TestLoadFileRejectsOtherEncodings(t *testing.T) {
+	for name, data := range map[string][]byte{
+		"latin1":    []byte("# caf\xe9\n0 5 * * 1 backup.exe\n"),
+		"odd utf16": {0xFF, 0xFE, 0x30},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := LoadFile(writeCrontabBytes(t, data))
+			if err == nil || !strings.Contains(err.Error(), "not UTF-8 or UTF-16") {
+				t.Errorf("err = %v, want a not UTF-8 or UTF-16 error", err)
+			}
+		})
 	}
 }

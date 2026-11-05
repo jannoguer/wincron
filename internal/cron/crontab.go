@@ -2,11 +2,14 @@ package cron
 
 import (
 	"bufio"
+	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf16"
 	"unicode/utf8"
 )
 
@@ -38,12 +41,43 @@ type Job struct {
 	key string
 }
 
+// decodeCrontab returns the text of a crontab file, accepting UTF-8 (with or
+// without a BOM) and BOM-prefixed UTF-16, which Notepad and PowerShell write.
+func decodeCrontab(data []byte) (string, error) {
+	switch {
+	case bytes.HasPrefix(data, []byte{0xFF, 0xFE}), bytes.HasPrefix(data, []byte{0xFE, 0xFF}):
+		bigEndian := data[0] == 0xFE
+		data = data[2:]
+		if len(data)%2 != 0 {
+			return "", errors.New("crontab is not UTF-8 or UTF-16: odd UTF-16 byte count")
+		}
+		units := make([]uint16, len(data)/2)
+		for i := range units {
+			if bigEndian {
+				units[i] = uint16(data[2*i])<<8 | uint16(data[2*i+1])
+			} else {
+				units[i] = uint16(data[2*i+1])<<8 | uint16(data[2*i])
+			}
+		}
+		return string(utf16.Decode(units)), nil
+	case bytes.HasPrefix(data, []byte{0xEF, 0xBB, 0xBF}):
+		data = data[3:]
+	}
+	if !utf8.Valid(data) {
+		return "", errors.New("crontab is not UTF-8 or UTF-16")
+	}
+	return string(data), nil
+}
+
 func LoadFile(path string) ([]Job, error) {
-	f, err := os.Open(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = f.Close() }()
+	text, err := decodeCrontab(data)
+	if err != nil {
+		return nil, err
+	}
 
 	var jobs []Job
 	var envs []string
@@ -53,7 +87,7 @@ func LoadFile(path string) ([]Job, error) {
 		occurrences[line]++
 		jobs = append(jobs, job)
 	}
-	scanner := bufio.NewScanner(f)
+	scanner := bufio.NewScanner(strings.NewReader(text))
 	lineNo := 0
 	for scanner.Scan() {
 		lineNo++
