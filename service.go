@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"syscall"
 	"time"
 
 	"golang.org/x/sys/windows"
@@ -116,16 +117,23 @@ func setRecoveryActions(service *mgr.Service) error {
 	return nil
 }
 
+// installService registers the service against exePath, or repoints an
+// existing registration at it (an upgrade, or a move out of an old location).
 func installService(exePath string) error {
 	m, err := connectManager()
 	if err != nil {
 		return err
 	}
 	defer func() { _ = m.Disconnect() }()
-	service, err := m.CreateService(serviceName, exePath, mgr.Config{
-		DisplayName: "wincron scheduler",
-		StartType:   mgr.StartAutomatic,
-	})
+	service, err := m.OpenService(serviceName)
+	if errors.Is(err, windows.ERROR_SERVICE_DOES_NOT_EXIST) {
+		service, err = m.CreateService(serviceName, exePath, mgr.Config{
+			DisplayName: "wincron scheduler",
+			StartType:   mgr.StartAutomatic,
+		})
+	} else if err == nil {
+		err = repointService(service, exePath)
+	}
 	if err != nil {
 		return err
 	}
@@ -138,6 +146,16 @@ func installService(exePath string) error {
 		return err
 	}
 	return service.Close()
+}
+
+func repointService(service *mgr.Service, exePath string) error {
+	config, err := service.Config()
+	if err != nil {
+		return err
+	}
+	config.BinaryPathName = syscall.EscapeArg(exePath)
+	config.StartType = mgr.StartAutomatic
+	return service.UpdateConfig(config)
 }
 
 // uninstallService stops the service before deleting it: DeleteService on a
